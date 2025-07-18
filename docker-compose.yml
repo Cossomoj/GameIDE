@@ -1,0 +1,141 @@
+version: '3.8'
+
+services:
+  # Frontend React приложение
+  frontend:
+    build: 
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      - NODE_ENV=development
+      - VITE_API_URL=http://localhost:3000
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - ./logs/frontend:/app/logs
+    command: npm run dev
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5173"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - gameide-network
+  
+  # Backend Node.js API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://gameide:gameide_password@postgres:5432/gameide_db
+      - REDIS_URL=redis://redis:6379
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LOG_LEVEL=debug
+      - GAMES_OUTPUT_PATH=/app/games-output
+      - UPLOADS_PATH=/app/games-output/uploads
+      - TEMPLATES_PATH=/app/games-output/templates
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+      - ./games-output:/app/games-output
+      - ./data:/app/data
+      - ./temp:/app/temp
+      - ./logs/backend:/app/logs
+      - ./.env:/app/.env
+    depends_on:
+      - redis
+      - postgres
+    command: npm run dev
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - gameide-network
+  
+  # Redis для очередей и кэша
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+      - ./logs/redis:/var/log/redis
+    command: redis-server --appendonly yes --logfile /var/log/redis/redis.log
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - gameide-network
+  
+  # PostgreSQL база данных
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=gameide_db
+      - POSTGRES_USER=gameide
+      - POSTGRES_PASSWORD=gameide_password
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./backend/database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./logs/postgres:/var/log/postgresql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gameide -d gameide_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - gameide-network
+
+  # Nginx для production (опционально)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./games-output/generated:/usr/share/nginx/html/games:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped
+    profiles:
+      - production
+    networks:
+      - gameide-network
+
+# Именованные тома для данных
+volumes:
+  redis-data:
+    driver: local
+  postgres-data:
+    driver: local
+
+# Сеть для изоляции сервисов
+networks:
+  gameide-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16 

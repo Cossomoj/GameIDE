@@ -1,0 +1,93 @@
+{
+  "name": "game-ide",
+  "version": "1.0.0",
+  "description": "AI Game Generator для Яндекс Игр - локальный веб-сервис для автоматической генерации HTML5 игр",
+  "main": "index.js",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "install:all": "npm install && npm run install:backend && npm run install:frontend",
+    "install:backend": "cd backend && npm install",
+    "install:frontend": "cd frontend && npm install",
+    
+    "dev": "docker-compose up --build",
+    "dev:logs": "docker-compose up --build | tee logs/system/dev-$(date +%Y%m%d-%H%M%S).log",
+    "start": "docker-compose up -d",
+    "stop": "docker-compose down",
+    "restart": "npm run stop && npm run start",
+    
+    "build": "npm run build:backend && npm run build:frontend",
+    "build:backend": "cd backend && npm run build",
+    "build:frontend": "cd frontend && npm run build",
+    
+    "test": "npm run test:backend && npm run test:frontend",
+    "test:backend": "cd backend && npm test",
+    "test:frontend": "cd frontend && npm test",
+    "test:integration": "npm run test:e2e",
+    "test:e2e": "echo 'E2E тесты будут добавлены позже'",
+    
+    "lint": "npm run lint:backend && npm run lint:frontend",
+    "lint:backend": "cd backend && npm run lint",
+    "lint:frontend": "cd frontend && npm run lint",
+    "lint:fix": "npm run lint:fix:backend && npm run lint:fix:frontend",
+    "lint:fix:backend": "cd backend && npm run lint:fix",
+    "lint:fix:frontend": "cd frontend && npm run lint:fix",
+    
+    "clean": "npm run clean:docker && npm run clean:logs && npm run clean:games",
+    "clean:docker": "docker-compose down -v --remove-orphans && docker system prune -f",
+    "clean:logs": "find logs -name '*.log' -type f -delete 2>/dev/null || true",
+    "clean:games": "rm -rf games-output/generated/* games-output/uploads/*",
+    "clean:all": "npm run clean && rm -rf node_modules backend/node_modules frontend/node_modules",
+    
+    "logs": "docker-compose logs -f",
+    "logs:backend": "docker-compose logs -f backend",
+    "logs:frontend": "docker-compose logs -f frontend",
+    "logs:db": "docker-compose logs -f postgres",
+    "logs:redis": "docker-compose logs -f redis",
+    
+    "db:reset": "docker-compose down postgres && docker volume rm gameide_postgres_data && docker-compose up -d postgres",
+    "redis:reset": "docker-compose down redis && docker volume rm gameide_redis_data && docker-compose up -d redis",
+    
+    "backup": "node scripts/backup.js",
+    "restore": "node scripts/restore.js",
+    
+    "docs:dev": "echo 'Документация находится в папке docs/'",
+    "docs:build": "echo 'Сборка документации будет добавлена позже'",
+    
+    "health": "curl -f http://localhost:3000/api/health && curl -f http://localhost:5173/",
+    "status": "docker-compose ps",
+    
+    "setup": "npm run install:all && cp env.example .env && echo 'Проект готов! Запустите: npm run dev'"
+  },
+  "keywords": [
+    "game-generator",
+    "ai",
+    "phaser",
+    "yandex-games",
+    "html5-games",
+    "typescript",
+    "react",
+    "node.js"
+  ],
+  "author": "GameIDE Team",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-org/game-ide.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-org/game-ide/issues"
+  },
+  "homepage": "https://github.com/your-org/game-ide#readme"
+} 
