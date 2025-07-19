@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gameide-prod
+  labels:
+    name: gameide-prod
+    environment: production
+    app: gameide
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gameide-service-account
+  namespace: gameide-prod
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: gameide-prod
+  name: gameide-role
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints", "persistentvolumeclaims", "configmaps", "secrets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets", "statefulsets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["extensions"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gameide-rolebinding
+  namespace: gameide-prod
+subjects:
+- kind: ServiceAccount
+  name: gameide-service-account
+  namespace: gameide-prod
+roleRef:
+  kind: Role
+  name: gameide-role
+  apiGroup: rbac.authorization.k8s.io 

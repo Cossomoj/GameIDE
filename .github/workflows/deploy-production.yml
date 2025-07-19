@@ -1,0 +1,506 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+        - production
+        - staging
+      force_deploy:
+        description: 'Force deployment (skip some checks)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  BACKEND_IMAGE_NAME: ${{ github.repository }}/backend
+  FRONTEND_IMAGE_NAME: ${{ github.repository }}/frontend
+  NODE_VERSION: '18'
+  DOCKER_BUILDKIT: 1
+
+jobs:
+  # Проверка кода и тесты
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: gameide_test
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+
+    - name: Install backend dependencies
+      working-directory: ./backend
+      run: npm ci
+
+    - name: Install frontend dependencies
+      working-directory: ./frontend
+      run: npm ci
+
+    - name: Lint backend code
+      working-directory: ./backend
+      run: npm run lint
+
+    - name: Lint frontend code
+      working-directory: ./frontend
+      run: npm run lint
+
+    - name: Type check backend
+      working-directory: ./backend
+      run: npm run type-check
+
+    - name: Type check frontend
+      working-directory: ./frontend
+      run: npm run type-check
+
+    - name: Run backend unit tests
+      working-directory: ./backend
+      run: npm run test:unit
+      env:
+        DATABASE_URL: postgresql://test_user:test_password@localhost:5432/gameide_test
+        REDIS_URL: redis://localhost:6379
+        NODE_ENV: test
+
+    - name: Run frontend unit tests
+      working-directory: ./frontend
+      run: npm run test:unit
+
+    - name: Run integration tests
+      working-directory: ./backend
+      run: npm run test:integration
+      env:
+        DATABASE_URL: postgresql://test_user:test_password@localhost:5432/gameide_test
+        REDIS_URL: redis://localhost:6379
+        NODE_ENV: test
+
+    - name: Generate test coverage
+      working-directory: ./backend
+      run: npm run test:coverage
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./backend/coverage/lcov.info
+        flags: backend
+
+  # Сканирование безопасности
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: Install backend dependencies
+      working-directory: ./backend
+      run: npm ci
+
+    - name: Install frontend dependencies
+      working-directory: ./frontend
+      run: npm ci
+
+    - name: Run npm audit (backend)
+      working-directory: ./backend
+      run: npm audit --audit-level=high
+
+    - name: Run npm audit (frontend)
+      working-directory: ./frontend
+      run: npm audit --audit-level=high
+
+    - name: Run Snyk security scan
+      uses: snyk/actions/node@master
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      with:
+        args: --severity-threshold=high
+
+    - name: OWASP ZAP Baseline Scan
+      uses: zaproxy/action-baseline@v0.7.0
+      if: github.event.inputs.environment == 'staging'
+      with:
+        target: 'https://staging.gameide.com'
+
+  # Сборка Docker образов
+  build:
+    name: Build Images
+    runs-on: ubuntu-latest
+    needs: [test, security]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    
+    outputs:
+      backend-image: ${{ steps.backend-meta.outputs.tags }}
+      frontend-image: ${{ steps.frontend-meta.outputs.tags }}
+      backend-digest: ${{ steps.backend-build.outputs.digest }}
+      frontend-digest: ${{ steps.frontend-build.outputs.digest }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract backend metadata
+      id: backend-meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Extract frontend metadata
+      id: frontend-meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push backend image
+      id: backend-build
+      uses: docker/build-push-action@v5
+      with:
+        context: ./backend
+        file: ./backend/Dockerfile.prod
+        push: true
+        tags: ${{ steps.backend-meta.outputs.tags }}
+        labels: ${{ steps.backend-meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        platforms: linux/amd64,linux/arm64
+        build-args: |
+          BUILDKIT_INLINE_CACHE=1
+          VERSION=${{ github.sha }}
+
+    - name: Build and push frontend image
+      id: frontend-build
+      uses: docker/build-push-action@v5
+      with:
+        context: ./frontend
+        file: ./frontend/Dockerfile.prod
+        push: true
+        tags: ${{ steps.frontend-meta.outputs.tags }}
+        labels: ${{ steps.frontend-meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        platforms: linux/amd64,linux/arm64
+        build-args: |
+          BUILDKIT_INLINE_CACHE=1
+          REACT_APP_API_URL=${{ secrets.PROD_API_URL }}
+          REACT_APP_WS_URL=${{ secrets.PROD_WS_URL }}
+          REACT_APP_ENVIRONMENT=production
+
+    - name: Generate SBOM
+      uses: anchore/sbom-action@v0
+      with:
+        image: ${{ steps.backend-build.outputs.digest }}
+        format: spdx-json
+        output-file: backend-sbom.spdx.json
+
+    - name: Scan backend image with Trivy
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ steps.backend-build.outputs.digest }}
+        format: 'sarif'
+        output: 'backend-trivy-results.sarif'
+
+    - name: Scan frontend image with Trivy
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ steps.frontend-build.outputs.digest }}
+        format: 'sarif'
+        output: 'frontend-trivy-results.sarif'
+
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'backend-trivy-results.sarif'
+
+  # Развертывание в staging
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.ref == 'refs/heads/main' || github.event.inputs.environment == 'staging'
+    environment: staging
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'latest'
+
+    - name: Configure kubectl
+      run: |
+        echo "${{ secrets.STAGING_KUBECONFIG }}" | base64 -d > kubeconfig
+        export KUBECONFIG=./kubeconfig
+
+    - name: Deploy to staging
+      run: |
+        # Обновляем образы в деплойментах
+        kubectl set image deployment/backend backend=${{ needs.build.outputs.backend-image }} -n gameide-staging
+        kubectl set image deployment/frontend frontend=${{ needs.build.outputs.frontend-image }} -n gameide-staging
+        
+        # Ждем успешного развертывания
+        kubectl rollout status deployment/backend -n gameide-staging --timeout=600s
+        kubectl rollout status deployment/frontend -n gameide-staging --timeout=600s
+
+    - name: Run smoke tests
+      run: |
+        # Ждем готовности сервисов
+        sleep 30
+        
+        # Проверяем здоровье API
+        curl -f https://staging.gameide.com/api/health
+        
+        # Проверяем frontend
+        curl -f https://staging.gameide.com/
+
+  # E2E тестирование
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: [deploy-staging]
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: Install dependencies
+      working-directory: ./tests/e2e
+      run: npm ci
+
+    - name: Run Playwright tests
+      working-directory: ./tests/e2e
+      run: npx playwright test
+      env:
+        BASE_URL: https://staging.gameide.com
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: failure()
+      with:
+        name: playwright-report
+        path: tests/e2e/playwright-report/
+
+  # Развертывание в production
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build, e2e-tests]
+    if: startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/main' && github.event.inputs.environment == 'production')
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'latest'
+
+    - name: Configure kubectl
+      run: |
+        echo "${{ secrets.PROD_KUBECONFIG }}" | base64 -d > kubeconfig
+        export KUBECONFIG=./kubeconfig
+
+    - name: Create backup
+      run: |
+        # Создаем резервную копию базы данных
+        kubectl exec -n gameide-prod statefulset/postgres -- pg_dump -U gameide_user gameide_prod > backup-$(date +%Y%m%d_%H%M%S).sql
+
+    - name: Deploy to production
+      run: |
+        # Blue-Green deployment
+        # Создаем новую версию
+        kubectl patch deployment backend -n gameide-prod -p '{"spec":{"template":{"spec":{"containers":[{"name":"backend","image":"${{ needs.build.outputs.backend-image }}"}]}}}}'
+        kubectl patch deployment frontend -n gameide-prod -p '{"spec":{"template":{"spec":{"containers":[{"name":"frontend","image":"${{ needs.build.outputs.frontend-image }}"}]}}}}'
+        
+        # Ждем успешного развертывания
+        kubectl rollout status deployment/backend -n gameide-prod --timeout=900s
+        kubectl rollout status deployment/frontend -n gameide-prod --timeout=900s
+
+    - name: Smoke tests in production
+      run: |
+        sleep 60
+        
+        # Проверяем здоровье сервисов
+        curl -f https://gameide.com/api/health
+        curl -f https://gameide.com/
+
+    - name: Update monitoring dashboards
+      run: |
+        # Обновляем дашборды Grafana с новой версией
+        curl -X POST \
+          -H "Authorization: Bearer ${{ secrets.GRAFANA_API_KEY }}" \
+          -H "Content-Type: application/json" \
+          -d '{"message": "Deployed version ${{ github.sha }}"}' \
+          https://monitoring.gameide.com/api/annotations
+
+  # Уведомления
+  notify:
+    name: Send Notifications
+    runs-on: ubuntu-latest
+    needs: [deploy-production]
+    if: always()
+    
+    steps:
+    - name: Notify Slack on success
+      if: needs.deploy-production.result == 'success'
+      uses: 8398a7/action-slack@v3
+      with:
+        status: success
+        channel: '#deployments'
+        text: |
+          🚀 Production deployment successful!
+          Version: ${{ github.sha }}
+          Deployed by: ${{ github.actor }}
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+    - name: Notify Slack on failure
+      if: needs.deploy-production.result == 'failure'
+      uses: 8398a7/action-slack@v3
+      with:
+        status: failure
+        channel: '#deployments'
+        text: |
+          ❌ Production deployment failed!
+          Version: ${{ github.sha }}
+          Actor: ${{ github.actor }}
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+    - name: Create GitHub release
+      if: startsWith(github.ref, 'refs/tags/v') && needs.deploy-production.result == 'success'
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ github.ref }}
+        draft: false
+        prerelease: false
+        body: |
+          ## Changes in this Release
+          
+          See the [CHANGELOG](CHANGELOG.md) for detailed information.
+          
+          ## Docker Images
+          
+          - Backend: `${{ needs.build.outputs.backend-image }}`
+          - Frontend: `${{ needs.build.outputs.frontend-image }}`
+          
+          ## Deployment Info
+          
+          - Deployed at: ${{ github.run_started_at }}
+          - Deployed by: ${{ github.actor }}
+          - Commit: ${{ github.sha }}
+
+  # Очистка ресурсов
+  cleanup:
+    name: Cleanup
+    runs-on: ubuntu-latest
+    needs: [deploy-production]
+    if: always()
+    
+    steps:
+    - name: Cleanup old images
+      run: |
+        # Удаляем старые образы Docker (оставляем последние 5)
+        echo "Cleanup would run here in real environment"
+        
+    - name: Cleanup old artifacts
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const artifacts = await github.rest.actions.listArtifactsForRepo({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+          });
+          
+          // Удаляем артефакты старше 30 дней
+          const thirtyDaysAgo = new Date();
+          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+          
+          for (const artifact of artifacts.data.artifacts) {
+            if (new Date(artifact.created_at) < thirtyDaysAgo) {
+              await github.rest.actions.deleteArtifact({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                artifact_id: artifact.id,
+              });
+            }
+          } 

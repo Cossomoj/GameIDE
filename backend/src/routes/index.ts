@@ -2,8 +2,38 @@ import { Application } from 'express';
 import gamesRouter from './games';
 import statsRouter from './stats';
 import queueRouter from './queue';
+import localizationRouter from './localization';
+import monetizationRouter from './monetization';
+import achievementsRouter from './achievements';
+import leaderboardsRouter from './leaderboards';
+import analyticsRouter from './analytics';
+import performanceRouter from './performance';
+import socialRouter from './social';
+import cloudSaveRouter from './cloudSave';
 import config from '@/config';
 import { EnvWriter } from '@/utils/envWriter';
+import { Router } from 'express';
+import gameRoutes from './games';
+import interactiveRoutes from './interactive';
+import queueRoutes from './queue';
+import analyticsRoutes from './analytics';
+import leaderboardsRoutes from './leaderboards';
+import achievementsRoutes from './achievements';
+import socialRoutes from './social';
+import localizationRoutes from './localization';
+import monetizationRoutes from './monetization';
+import performanceRoutes from './performance';
+import cloudSaveRoutes from './cloudSave';
+import tournamentsRoutes from './tournaments';
+import testingRoutes from './testing';
+import multiLanguageRoutes from './multiLanguage';
+import advancedAnalyticsRoutes from './advancedAnalytics';
+import gameStoreRoutes from './gameStore';
+import securityRoutes from './security';
+import pluginRoutes from './plugins';
+import advancedTemplatesRoutes from './advancedTemplates';
+
+const router = Router();
 
 export function setupRoutes(app: Application): void {
   // Создаем экземпляр для записи в .env файл
@@ -282,8 +312,198 @@ export function setupRoutes(app: Application): void {
     }
   });
 
+  // AI Model validation endpoint
+  app.post('/api/ai/validate-model', async (req, res) => {
+    try {
+      const { provider, model, apiKey } = req.body;
+
+      if (!provider || !model) {
+        return res.status(400).json({
+          error: 'Провайдер и модель обязательны'
+        });
+      }
+
+      let baseURL = '';
+      let headers: Record<string, string> = {};
+
+      // Настройка для каждого провайдера
+      switch (provider) {
+        case 'deepseek':
+          baseURL = config.ai.deepseek.baseURL;
+          headers = {
+            'Authorization': `Bearer ${apiKey || config.ai.deepseek.apiKey}`,
+            'Content-Type': 'application/json'
+          };
+          break;
+        case 'openai':
+          baseURL = config.ai.openai.baseURL;
+          headers = {
+            'Authorization': `Bearer ${apiKey || config.ai.openai.apiKey}`,
+            'Content-Type': 'application/json'
+          };
+          break;
+        case 'claude':
+          baseURL = config.ai.claude.baseURL;
+          headers = {
+            'x-api-key': apiKey || config.ai.claude.apiKey,
+            'Content-Type': 'application/json',
+            'anthropic-version': '2023-06-01'
+          };
+          break;
+        default:
+          return res.status(400).json({
+            error: 'Неподдерживаемый провайдер'
+          });
+      }
+
+      if (!headers.Authorization && !headers['x-api-key']) {
+        return res.status(400).json({
+          error: 'API ключ не настроен'
+        });
+      }
+
+      // Получаем список моделей
+      const modelsURL = provider === 'claude' ? `${baseURL}/v1/models` : `${baseURL}/models`;
+      
+      const response = await fetch(modelsURL, {
+        headers,
+        signal: AbortSignal.timeout(10000)
+      });
+
+      if (!response.ok) {
+        return res.status(400).json({
+          success: false,
+          error: `Ошибка API ${provider}: ${response.status}`
+        });
+      }
+
+      const data = await response.json();
+      let models = [];
+
+      // Обработка ответа для разных провайдеров
+      if (provider === 'claude') {
+        models = data.data || [];
+      } else {
+        models = data.data || [];
+      }
+
+      // Проверяем наличие модели
+      const modelExists = models.some((m: any) => 
+        m.id === model || m.name === model || m.model === model
+      );
+
+      res.json({
+        success: true,
+        valid: modelExists,
+        error: modelExists ? null : `Модель "${model}" не найдена в API ${provider}`,
+        availableModels: models.slice(0, 10).map((m: any) => ({
+          id: m.id || m.name || m.model,
+          name: m.id || m.name || m.model
+        }))
+      });
+
+    } catch (error) {
+      console.error('Ошибка валидации модели:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Ошибка валидации модели'
+      });
+    }
+  });
+
+  // AI Models list endpoint
+  app.get('/api/ai/models', async (req, res) => {
+    try {
+      console.log('📥 Загрузка списков моделей AI...');
+
+      const models = {
+        openai: [
+          { id: 'gpt-4o', name: 'GPT-4o', description: 'Самая быстрая и умная флагманская модель' },
+          { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: 'Доступная и быстрая модель для простых задач' },
+          { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', description: 'Предыдущая флагманская модель' },
+          { id: 'gpt-4', name: 'GPT-4', description: 'Оригинальная GPT-4 модель' },
+          { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', description: 'Быстрая и экономичная модель' }
+        ],
+        claude: [
+          { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', description: 'Самая умная модель Claude' },
+          { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', description: 'Быстрая и легкая модель' },
+          { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', description: 'Мощная модель для сложных задач' },
+          { id: 'claude-3-sonnet-20240229', name: 'Claude 3 Sonnet', description: 'Балансированная модель' },
+          { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', description: 'Быстрая модель для простых задач' }
+        ],
+        deepseek: [
+          { id: 'deepseek-chat', name: 'DeepSeek Chat', description: 'Универсальная модель для чата' },
+          { id: 'deepseek-coder', name: 'DeepSeek Coder', description: 'Специализированная модель для программирования' },
+          { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner', description: 'Модель для сложных рассуждений' }
+        ]
+      };
+
+      res.json({
+        success: true,
+        models: models
+      });
+
+    } catch (error) {
+      console.error('Ошибка загрузки моделей:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Ошибка загрузки списка моделей'
+      });
+    }
+  });
+
+  // Основные маршруты
+  router.use('/games', gameRoutes);
+  router.use('/interactive', interactiveRoutes);
+  router.use('/stats', statsRouter);
+  router.use('/queue', queueRouter);
+
+  // Аналитика и мониторинг
+  router.use('/analytics', analyticsRouter);
+  router.use('/advanced-analytics', advancedAnalyticsRoutes);
+  router.use('/performance', performanceRouter);
+
+  // Социальные функции
+  router.use('/leaderboards', leaderboardsRouter);
+  router.use('/achievements', achievementsRouter);
+  router.use('/social', socialRouter);
+  router.use('/tournaments', tournamentsRoutes);
+
+  // Игровые системы
+  router.use('/cloud-save', cloudSaveRouter);
+  router.use('/localization', localizationRouter);
+  router.use('/monetization', monetizationRouter);
+
+  // Разработка и тестирование
+  router.use('/testing', testingRoutes);
+  router.use('/multi-language', multiLanguageRoutes);
+  router.use('/advanced-templates', advancedTemplatesRoutes);
+
+  // Платформа и магазин
+  router.use('/game-store', gameStoreRoutes);
+  router.use('/plugins', pluginRoutes);
+
+  // Безопасность
+  router.use('/security', securityRoutes);
+
   // API роуты
   app.use('/api/games', gamesRouter);
   app.use('/api/stats', statsRouter);
   app.use('/api/queue', queueRouter);
-} 
+  app.use('/api/localization', localizationRouter);
+  app.use('/api/monetization', monetizationRouter);
+  app.use('/api/achievements', achievementsRouter);
+  app.use('/api/leaderboards', leaderboardsRouter);
+  app.use('/api/analytics', analyticsRouter);
+  app.use('/api/performance', performanceRouter);
+  app.use('/api/social', socialRouter);
+  app.use('/api/cloud-save', cloudSaveRouter);
+  app.use('/api/tournaments', require('./tournaments').default);
+  app.use('/api/testing', require('./testing').default);
+  app.use('/api/multi-language', require('./multiLanguage').default);
+  app.use('/api/advanced-analytics', require('./advancedAnalytics').default);
+  app.use('/api/game-store', require('./gameStore').default);
+  app.use('/api/security', require('./security').default);
+}
+
+export default router; 

@@ -1,27 +1,5 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import App from './App.tsx'
-
-console.log('🚀 main.tsx с React загружается...')
-
-const root = document.getElementById('root')
-console.log('📍 Root element:', root)
-
-if (root) {
-  ReactDOM.createRoot(root).render(
-    <React.StrictMode>
-      <App />
-    </React.StrictMode>
-  )
-  console.log('✅ React приложение запущено')
-} else {
-  console.error('❌ Элемент root не найден!')
-}
-
-// Оригинальный код React (закомментирован для тестирования)
-/*
-import React from 'react'
-import ReactDOM from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
@@ -75,5 +53,4 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       </BrowserRouter>
     </QueryClientProvider>
   </React.StrictMode>,
-)
-*/ 
+) 

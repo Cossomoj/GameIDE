@@ -1,0 +1,78 @@
+# Multi-stage build for production backend
+FROM node:18-alpine AS builder
+
+# Устанавливаем рабочую директорию
+WORKDIR /app
+
+# Копируем package files
+COPY package*.json ./
+COPY tsconfig.json ./
+
+# Устанавливаем зависимости для сборки
+RUN npm ci --only=production && npm cache clean --force
+
+# Копируем исходный код
+COPY src/ ./src/
+COPY templates/ ./templates/
+
+# Компилируем TypeScript
+RUN npm run build
+
+# Production stage
+FROM node:18-alpine AS production
+
+# Создаем пользователя для безопасности
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S gameide -u 1001 -G nodejs
+
+# Устанавливаем системные зависимости
+RUN apk add --no-cache \
+    curl \
+    dumb-init \
+    && rm -rf /var/cache/apk/*
+
+# Устанавливаем рабочую директорию
+WORKDIR /app
+
+# Копируем package files
+COPY package*.json ./
+
+# Устанавливаем только production зависимости
+RUN npm ci --only=production && \
+    npm cache clean --force && \
+    rm -rf /tmp/*
+
+# Копируем собранное приложение из builder stage
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/templates ./templates
+
+# Создаем необходимые директории
+RUN mkdir -p \
+    games-output \
+    logs \
+    uploads \
+    temp \
+    template-assets \
+    template-components
+
+# Устанавливаем права доступа
+RUN chown -R gameide:nodejs /app
+
+# Копируем скрипт healthcheck
+COPY scripts/healthcheck.js ./scripts/
+
+# Переключаемся на непривилегированного пользователя
+USER gameide
+
+# Exposing port
+EXPOSE 3001
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD node scripts/healthcheck.js || exit 1
+
+# Используем dumb-init для корректной обработки сигналов
+ENTRYPOINT ["dumb-init", "--"]
+
+# Запускаем приложение
+CMD ["node", "dist/index.js"] 

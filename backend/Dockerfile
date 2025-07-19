@@ -1,55 +1,49 @@
-# Используем Node.js 20 как базовый образ
-FROM node:20-alpine
+# Development Dockerfile for Backend
+FROM node:18-alpine
 
-# Устанавливаем рабочую директорию
+# Установка curl для health checks
+RUN apk add --no-cache curl
+
+# Создание пользователя app
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodeuser -u 1001 -G nodejs
+
+# Рабочая директория
 WORKDIR /app
 
-# Устанавливаем системные зависимости для компиляции нативных модулей
-RUN apk add --no-cache \
-    python3 \
-    py3-setuptools \
-    make \
-    g++ \
-    cairo-dev \
-    jpeg-dev \
-    pango-dev \
-    musl-dev \
-    giflib-dev \
-    pixman-dev \
-    pangomm-dev \
-    libjpeg-turbo-dev \
-    freetype-dev \
-    vips-dev
-
-# Копируем package.json и package-lock.json
+# Копирование package files
 COPY package*.json ./
+COPY tsconfig.json ./
 
-# Устанавливаем зависимости (включая dev для режима разработки)
-RUN npm install
+# Установка зависимостей (включая dev зависимости для ts-node)
+RUN npm install && npm cache clean --force
 
-# Копируем исходный код
-COPY . .
+# Установка ts-node глобально
+RUN npm install -g ts-node nodemon
 
-# Пропускаем компиляцию для режима разработки
-# RUN npm run build
+# Копирование исходного кода
+COPY src/ ./src/
+COPY templates/ ./templates/
 
-# Создаем пользователя без root привилегий
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S nextjs -u 1001
+# Создание необходимых директорий
+RUN mkdir -p \
+    games-output \
+    logs \
+    temp \
+    uploads
 
-# Создаем необходимые директории и устанавливаем права
-RUN mkdir -p /app/generated-games /app/data /app/temp /app/logs
-RUN chown -R nextjs:nodejs /app
+# Установка прав доступа
+RUN chown -R nodeuser:nodejs /app
 
-# Переключаемся на пользователя без root
-USER nextjs
+# Переключение на непривилегированного пользователя
+USER nodeuser
 
-# Открываем порт
-EXPOSE 3000
+# Порт приложения
+EXPOSE 3001
 
-# Устанавливаем переменные окружения
-ENV NODE_ENV=development
-ENV DATABASE_PATH=/app/data/games.db
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:3001/api/health || exit 1
 
-# Команда запуска
-CMD ["npm", "run", "dev"] 
+# Временно запускаем простой сервер для тестирования
+CMD ["ts-node", "src/simple-server.ts"] 

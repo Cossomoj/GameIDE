@@ -1,98 +1,465 @@
 import { BaseGameTemplate } from './base';
-import { GamePrompt, GameDesign } from '../../src/types';
+import { GamePrompt, GameDesign } from '@/types';
 
 export class ArcadeTemplate extends BaseGameTemplate {
   name = 'arcade';
   genre = 'arcade';
   description = 'Быстрая аркадная игра с постоянно увеличивающейся сложностью';
 
-  generateCode(prompt: GamePrompt, design: GameDesign) {
-    const js = this.generateJavaScript(prompt, design);
-    const css = this.generateCSS();
-    const html = this.generateHTML(prompt.title, js, css);
-
-    return { html, js, css };
+  public generateGame(prompt: GamePrompt, design: GameDesign): string {
+    return `
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>${prompt.title}</title>
+    <meta name="description" content="${prompt.title} - HTML5 аркада для Yandex Games">
+    <meta name="keywords" content="аркада, игра, HTML5, Yandex Games">
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background: #000033;
+            color: #fff;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        
+        #game {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        #ui-overlay {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            z-index: 1000;
+            color: white;
+            font-size: 18px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.7);
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 8px;
+        }
+        
+        .mobile-controls {
+            position: fixed;
+            bottom: 20px;
+            width: 100%;
+            display: none;
+            justify-content: center;
+            gap: 20px;
+            padding: 0 20px;
+            z-index: 1000;
+        }
+        
+        .control-button {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.2);
+            border: 2px solid rgba(255,255,255,0.3);
+            color: white;
+            font-size: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            touch-action: manipulation;
+            user-select: none;
+            cursor: pointer;
+        }
+        
+        .control-button:active {
+            background: rgba(255,255,255,0.4);
+        }
+        
+        @media (max-width: 768px) {
+            .mobile-controls {
+                display: flex;
+            }
+        }
+        
+        .game-menu {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.9);
+            padding: 30px;
+            border-radius: 15px;
+            text-align: center;
+            z-index: 2000;
+            display: none;
+        }
+        
+        .menu-button {
+            background: #e74c3c;
+            border: none;
+            color: white;
+            padding: 12px 24px;
+            margin: 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.3s;
+        }
+        
+        .menu-button:hover {
+            background: #c0392b;
+        }
+        
+        .reward-button {
+            background: #f39c12;
+        }
+        
+        .reward-button:hover {
+            background: #e67e22;
+        }
+    </style>
+</head>
+<body>
+    <div id="game"></div>
+    
+    <!-- UI оверлей -->
+    <div id="ui-overlay">
+        <div data-i18n="game.score">Счёт</div>: <span id="score-value">0</span><br>
+        <div data-i18n="game.lives">Жизни</div>: <span id="lives-value">3</span><br>
+        <div data-i18n="game.level">Уровень</div>: <span id="level-value">1</span><br>
+        <div>Скорость: <span id="speed-value">1</span></div>
+    </div>
+    
+    <!-- Мобильные элементы управления -->
+    <div class="mobile-controls">
+        <div class="control-button" id="left-btn">←</div>
+        <div class="control-button" id="right-btn">→</div>
+        <div class="control-button" id="fire-btn">🔥</div>
+    </div>
+    
+    <!-- Меню игры -->
+    <div id="game-menu" class="game-menu">
+        <h2 data-i18n="game.over">Игра окончена</h2>
+        <p>Счёт: <span id="final-score">0</span></p>
+        <button class="menu-button" id="restart-btn" data-i18n="game.restart">Начать заново</button>
+        <button class="menu-button reward-button" id="reward-btn" data-i18n="ad.reward">Реклама за продолжение</button>
+        <button class="menu-button" id="leaderboard-btn" data-i18n="leaderboard.title">Таблица лидеров</button>
+    </div>
+    
+    <!-- Phaser 3 -->
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
+    
+    <!-- Yandex Games SDK Enhanced Integration -->
+    <script src="https://yandex.ru/games/sdk/v2"></script>
+    
+    <script>
+        ${this.generateJavaScript(prompt, design)}
+    </script>
+</body>
+</html>
+`;
   }
 
   private generateJavaScript(prompt: GamePrompt, design: GameDesign): string {
     return `
-${this.generateYandexGamesSDK()}
-${this.generateBaseSounds()}
-
-// Главный класс аркадной игры
+// Главный класс аркадной игры с интеграцией Yandex Games SDK
 class ArcadeGame {
     constructor() {
         this.score = 0;
         this.lives = 3;
         this.level = 1;
+        this.speed = 1;
         this.gameStarted = false;
         this.gameOver = false;
-        this.speed = 100;
-        this.spawnRate = 2000; // Интервал появления препятствий в мс
-        this.difficulty = 1;
+        this.version = '1.0.0';
         
         // Настройки игры
         this.config = {
             playerSpeed: 300,
-            maxSpeed: 500,
-            speedIncrease: 10,
-            spawnRateDecrease: 50,
-            pointsPerSecond: 1,
-            bonusPoints: 50
+            bulletSpeed: 400,
+            enemySpeed: 100,
+            enemySpawnRate: 2000, // миллисекунды
+            powerUpChance: 0.1
+        };
+        
+        // Статистика для достижений
+        this.stats = {
+            gamesPlayed: 0,
+            enemiesDestroyed: 0,
+            bulletsShot: 0,
+            powerUpsCollected: 0,
+            survivalTime: 0,
+            gameStartTime: 0
         };
     }
 
+    // Методы для интеграции с Yandex SDK
     addReward() {
-        // Награда за просмотр рекламы
         this.lives += 1;
         this.updateUI();
+        
+        // Отслеживаем событие получения награды
+        if (window.yandexGamesSDK) {
+            window.yandexGamesSDK.trackGameEvent('reward_received', { 
+                type: 'extra_life', 
+                lives: this.lives 
+            });
+        }
+        
+        console.log('🎁 Получена дополнительная жизнь');
     }
 
     updateScore(points) {
         this.score += points;
         this.updateUI();
         
-        // Увеличиваем сложность каждые 100 очков
-        const newLevel = Math.floor(this.score / 100) + 1;
-        if (newLevel > this.level) {
-            this.level = newLevel;
-            this.increaseDifficulty();
-        }
+        // Проверяем достижения
+        this.checkAchievements();
         
-        // Сохраняем результат в Yandex Games
-        if (window.yandexSDK && window.yandexSDK.initialized) {
-            window.yandexSDK.saveScore(this.score);
+        // Сохраняем результат в лидерборды
+        if (window.yandexGamesSDK && window.yandexGamesSDK.isReady()) {
+            window.yandexGamesSDK.submitScore('arcade_score', this.score, {
+                level: this.level,
+                enemiesDestroyed: this.stats.enemiesDestroyed
+            });
         }
-    }
-
-    increaseDifficulty() {
-        this.speed = Math.min(this.speed + this.config.speedIncrease, this.config.maxSpeed);
-        this.spawnRate = Math.max(this.spawnRate - this.config.spawnRateDecrease, 500);
-        this.difficulty = this.level;
     }
 
     updateUI() {
-        document.getElementById('score-value').textContent = this.score;
-        document.getElementById('lives-value').textContent = this.lives;
-        
-        // Обновляем индикатор уровня
+        const scoreElement = document.getElementById('score-value');
+        const livesElement = document.getElementById('lives-value');
         const levelElement = document.getElementById('level-value');
-        if (levelElement) {
-            levelElement.textContent = this.level;
+        const speedElement = document.getElementById('speed-value');
+        
+        if (scoreElement) scoreElement.textContent = this.score.toString();
+        if (livesElement) livesElement.textContent = this.lives.toString();
+        if (levelElement) levelElement.textContent = this.level.toString();
+        if (speedElement) speedElement.textContent = this.speed.toFixed(1);
+    }
+
+    startGame() {
+        this.stats.gameStartTime = Date.now();
+        
+        // Отслеживаем начало игры
+        if (window.yandexGamesSDK) {
+            window.yandexGamesSDK.trackGameEvent('game_start', { 
+                level: this.level,
+                lives: this.lives 
+            });
+        }
+    }
+
+    levelUp() {
+        this.level++;
+        this.speed += 0.2;
+        this.config.enemySpawnRate = Math.max(500, this.config.enemySpawnRate - 100);
+        
+        // Проверяем достижения
+        this.checkAchievements();
+        
+        // Отслеживаем повышение уровня
+        if (window.yandexGamesSDK) {
+            window.yandexGamesSDK.trackGameEvent('level_up', { 
+                level: this.level,
+                score: this.score,
+                speed: this.speed
+            });
+        }
+        
+        // Показываем межстраничную рекламу каждые 5 уровней
+        if (this.level % 5 === 0 && window.yandexGamesSDK) {
+            window.yandexGamesSDK.showInterstitialAd('level_up');
+        }
+    }
+
+    destroyEnemy() {
+        this.stats.enemiesDestroyed++;
+        this.updateScore(10 * this.level);
+        
+        // Повышение уровня каждые 10 врагов
+        if (this.stats.enemiesDestroyed % 10 === 0) {
+            this.levelUp();
         }
     }
 
     gameEnd() {
         this.gameOver = true;
+        this.stats.gamesPlayed++;
+        this.stats.survivalTime = Date.now() - this.stats.gameStartTime;
         
-        // Показываем межстраничную рекламу при окончании игры
-        if (window.yandexSDK && window.yandexSDK.initialized) {
-            window.yandexSDK.showInterstitialAd();
+        // Отслеживаем окончание игры
+        if (window.yandexGamesSDK) {
+            window.yandexGamesSDK.trackGameEvent('game_over', { 
+                score: this.score,
+                level: this.level,
+                survivalTime: this.stats.survivalTime,
+                enemiesDestroyed: this.stats.enemiesDestroyed,
+                reason: this.lives <= 0 ? 'no_lives' : 'quit'
+            });
         }
+        
+        // Показываем меню окончания игры
+        this.showGameOverMenu();
+        
+        // Сохраняем прогресс
+        this.saveProgress();
+    }
+
+    checkAchievements() {
+        if (!window.yandexGamesSDK) return;
+        
+        // Первая победа
+        if (this.score > 0 && this.stats.gamesPlayed === 0) {
+            window.yandexGamesSDK.unlockAchievement('FIRST_WIN');
+        }
+        
+        // Уничтожитель (100 врагов)
+        if (this.stats.enemiesDestroyed >= 100) {
+            window.yandexGamesSDK.updateAchievementProgress('DESTROY_100_ENEMIES', this.stats.enemiesDestroyed);
+        }
+        
+        // Снайпер (высокая точность)
+        const accuracy = this.stats.bulletsShot > 0 ? this.stats.enemiesDestroyed / this.stats.bulletsShot : 0;
+        if (accuracy >= 0.8 && this.stats.bulletsShot >= 50) {
+            window.yandexGamesSDK.unlockAchievement('SNIPER');
+        }
+        
+        // Выживший (5 минут)
+        if (this.stats.survivalTime >= 300000) {
+            window.yandexGamesSDK.unlockAchievement('SURVIVOR');
+        }
+    }
+
+    async saveProgress() {
+        if (!window.yandexGamesSDK) return;
+        
+        const gameData = {
+            highScore: Math.max(this.score, await this.getHighScore()),
+            totalGames: this.stats.gamesPlayed,
+            totalEnemiesDestroyed: this.stats.enemiesDestroyed,
+            maxLevel: this.level,
+            bestSurvivalTime: Math.max(this.stats.survivalTime, await this.getBestSurvivalTime()),
+            settings: {
+                sound: true,
+                music: true
+            },
+            lastPlayed: Date.now()
+        };
+        
+        await window.yandexGamesSDK.savePlayerData(gameData);
+    }
+
+    async getHighScore() {
+        if (!window.yandexGamesSDK) return 0;
+        
+        const data = await window.yandexGamesSDK.loadPlayerData(['highScore']);
+        return data.highScore || 0;
+    }
+
+    async getBestSurvivalTime() {
+        if (!window.yandexGamesSDK) return 0;
+        
+        const data = await window.yandexGamesSDK.loadPlayerData(['bestSurvivalTime']);
+        return data.bestSurvivalTime || 0;
+    }
+
+    showGameOverMenu() {
+        const menu = document.getElementById('game-menu');
+        const finalScore = document.getElementById('final-score');
+        
+        if (menu) menu.style.display = 'block';
+        if (finalScore) finalScore.textContent = this.score.toString();
+    }
+
+    hideGameOverMenu() {
+        const menu = document.getElementById('game-menu');
+        if (menu) menu.style.display = 'none';
+    }
+
+    restart() {
+        this.score = 0;
+        this.lives = 3;
+        this.level = 1;
+        this.speed = 1;
+        this.gameOver = false;
+        this.gameStarted = true;
+        
+        // Сброс статистики
+        this.stats.enemiesDestroyed = 0;
+        this.stats.bulletsShot = 0;
+        this.stats.powerUpsCollected = 0;
+        this.stats.survivalTime = 0;
+        
+        this.updateUI();
+        this.hideGameOverMenu();
+        
+        // Перезапускаем сцену
+        if (window.game && window.game.scene) {
+            window.game.scene.restart('ArcadeScene');
+        }
+    }
+
+    pause() {
+        if (window.game && window.game.scene && window.game.scene.isActive('ArcadeScene')) {
+            window.game.scene.pause('ArcadeScene');
+        }
+    }
+
+    resume() {
+        if (window.game && window.game.scene && window.game.scene.isPaused('ArcadeScene')) {
+            window.game.scene.resume('ArcadeScene');
+        }
+    }
+
+    setQuality(quality) {
+        console.log('🎮 Качество игры изменено на:', quality);
+        
+        if (window.game && window.game.scene) {
+            const scene = window.game.scene.getScene('ArcadeScene');
+            if (scene && scene.applyQuality) {
+                scene.applyQuality(quality);
+            }
+        }
+    }
+
+    resize(width, height) {
+        if (window.game) {
+            window.game.scale.resize(width, height);
+        }
+    }
+
+    processPurchase(purchase) {
+        console.log('💰 Обрабатываем покупку:', purchase);
+        
+        switch (purchase.productID) {
+            case 'extra_lives':
+                this.lives += 3;
+                break;
+            case 'power_boost':
+                this.config.playerSpeed *= 1.5;
+                this.config.bulletSpeed *= 1.5;
+                break;
+            case 'shield':
+                // Временная неуязвимость
+                break;
+        }
+        
+        this.updateUI();
     }
 }
 
-// Главная сцена игры
+// Главная сцена аркадной игры
 class ArcadeScene extends Phaser.Scene {
     constructor() {
         super({ key: 'ArcadeScene' });
@@ -100,463 +467,443 @@ class ArcadeScene extends Phaser.Scene {
 
     preload() {
         this.createSimpleSprites();
-        
-        // Инициализируем звуковой менеджер
         this.soundManager = new SoundManager(this);
         this.soundManager.preload();
     }
 
     createSimpleSprites() {
-        // Игрок - яркий квадрат
+        // Игрок (космический корабль)
         this.add.graphics()
-            .fillStyle(${design.character.primaryColor || '0x00FF00'})
-            .fillRect(0, 0, 32, 32)
+            .fillStyle(0x00ff00)
+            .fillTriangle(16, 0, 0, 32, 32, 32)
             .generateTexture('player', 32, 32);
 
-        // Препятствие - красный треугольник
+        // Враги
         this.add.graphics()
-            .fillStyle(0xFF0000)
-            .beginPath()
-            .moveTo(16, 0)
-            .lineTo(32, 32)
-            .lineTo(0, 32)
-            .closePath()
-            .fillPath()
-            .generateTexture('obstacle', 32, 32);
+            .fillStyle(0xff0000)
+            .fillTriangle(16, 32, 0, 0, 32, 0)
+            .generateTexture('enemy', 32, 32);
 
-        // Бонус - золотая звезда
+        // Пули игрока
         this.add.graphics()
-            .fillStyle(0xFFD700)
-            .beginPath()
-            .moveTo(12, 0)
-            .lineTo(15, 9)
-            .lineTo(24, 9)
-            .lineTo(18, 15)
-            .lineTo(21, 24)
-            .lineTo(12, 18)
-            .lineTo(3, 24)
-            .lineTo(6, 15)
-            .lineTo(0, 9)
-            .lineTo(9, 9)
-            .closePath()
-            .fillPath()
-            .generateTexture('bonus', 24, 24);
+            .fillStyle(0xffff00)
+            .fillRect(0, 0, 4, 8)
+            .generateTexture('bullet', 4, 8);
 
-        // Фон с движущимися полосами
+        // Пули врагов
         this.add.graphics()
-            .fillGradientStyle(0x000033, 0x000066, 0x000099, 0x0000CC)
-            .fillRect(0, 0, 800, 600)
-            .generateTexture('background', 800, 600);
+            .fillStyle(0xff6600)
+            .fillRect(0, 0, 4, 8)
+            .generateTexture('enemyBullet', 4, 8);
 
-        // Полоса для эффекта движения
+        // Бонусы
         this.add.graphics()
-            .fillStyle(0x444444)
-            .fillRect(0, 0, 10, 100)
-            .generateTexture('stripe', 10, 100);
+            .fillStyle(0x00ffff)
+            .fillStar(16, 16, 8, 16, 8, 0)
+            .generateTexture('powerUp', 32, 32);
+
+        // Звезды для фона
+        this.add.graphics()
+            .fillStyle(0xffffff)
+            .fillCircle(2, 2, 1)
+            .generateTexture('star', 4, 4);
     }
 
     create() {
-        // Фон
-        this.add.image(400, 300, 'background');
+        // Фон со звездами
+        this.createStarField();
 
-        // Создаем полосы для эффекта движения
-        this.createMovingStripes();
+        // Игрок
+        this.player = this.physics.add.sprite(400, 500, 'player');
+        this.player.setCollideWorldBounds(true);
 
-        // Создаем игрока
-        this.createPlayer();
-        
-        // Создаем группы для препятствий и бонусов
-        this.createGroups();
-        
-        // Настраиваем управление
+        // Группы объектов
+        this.enemies = this.physics.add.group();
+        this.bullets = this.physics.add.group();
+        this.enemyBullets = this.physics.add.group();
+        this.powerUps = this.physics.add.group();
+
+        // Управление
         this.setupControls();
-        
-        // Настраиваем коллизии
+
+        // Коллизии
         this.setupCollisions();
 
-        // Инициализируем звуки
-        this.soundManager.create();
+        // Спавн врагов
+        this.spawnTimer = this.time.addEvent({
+            delay: window.gameInstance.config.enemySpawnRate,
+            callback: this.spawnEnemy,
+            callbackScope: this,
+            loop: true
+        });
 
-        // Запускаем таймеры
-        this.startTimers();
+        // Спавн бонусов
+        this.powerUpTimer = this.time.addEvent({
+            delay: 10000,
+            callback: this.spawnPowerUp,
+            callbackScope: this,
+            loop: true
+        });
 
-        // Добавляем UI элементы
-        this.createUI();
-    }
-
-    createMovingStripes() {
-        this.stripes = this.add.group();
-        
-        for (let i = 0; i < 10; i++) {
-            const x = i * 80;
-            const stripe = this.add.image(x, 300, 'stripe');
-            stripe.setAlpha(0.3);
-            this.stripes.add(stripe);
+        // Начинаем игру
+        if (window.gameInstance) {
+            window.gameInstance.startGame();
         }
     }
 
-    createPlayer() {
-        this.player = this.add.sprite(100, 300, 'player');
-        this.player.setScale(1.2);
+    createStarField() {
+        this.stars = this.add.group();
         
-        // Добавляем светящийся эффект
-        this.player.setTint(0xFFFFFF);
-        this.tweens.add({
-            targets: this.player,
-            scaleX: 1.4,
-            scaleY: 1.4,
-            duration: 1000,
-            yoyo: true,
-            repeat: -1,
-            ease: 'Sine.easeInOut'
-        });
-    }
-
-    createGroups() {
-        this.obstacles = this.add.group();
-        this.bonuses = this.add.group();
+        for (let i = 0; i < 100; i++) {
+            const star = this.add.sprite(
+                Phaser.Math.Between(0, 800),
+                Phaser.Math.Between(0, 600),
+                'star'
+            );
+            star.setAlpha(Phaser.Math.FloatBetween(0.1, 1.0));
+            this.stars.add(star);
+        }
     }
 
     setupControls() {
         this.cursors = this.input.keyboard.createCursorKeys();
         this.wasdKeys = this.input.keyboard.addKeys('W,S,A,D');
+        this.spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+
+        // Мобильные элементы управления
+        this.setupMobileControls();
         
-        // Поддержка касаний для мобильных устройств
-        this.input.on('pointerdown', (pointer) => {
-            const targetY = pointer.y;
-            this.movePlayerTo(targetY);
-        });
-
-        // Начинаем игру по любому нажатию
-        this.input.keyboard.on('keydown', () => {
-            if (!window.gameInstance.gameStarted) {
-                this.startGame();
-            }
-        });
-
-        this.input.on('pointerdown', () => {
-            if (!window.gameInstance.gameStarted) {
-                this.startGame();
-            }
+        // Автоматическая стрельба
+        this.fireTimer = this.time.addEvent({
+            delay: 150,
+            callback: this.autoFire,
+            callbackScope: this,
+            loop: true
         });
     }
 
-    movePlayerTo(y) {
-        const clampedY = Phaser.Math.Clamp(y, 32, 568);
-        
-        this.tweens.add({
-            targets: this.player,
-            y: clampedY,
-            duration: 200,
-            ease: 'Power2'
-        });
+    setupMobileControls() {
+        const leftBtn = document.getElementById('left-btn');
+        const rightBtn = document.getElementById('right-btn');
+        const fireBtn = document.getElementById('fire-btn');
+
+        this.mobileControls = {
+            left: false,
+            right: false,
+            fire: false
+        };
+
+        if (leftBtn) {
+            leftBtn.addEventListener('touchstart', () => this.mobileControls.left = true);
+            leftBtn.addEventListener('touchend', () => this.mobileControls.left = false);
+        }
+
+        if (rightBtn) {
+            rightBtn.addEventListener('touchstart', () => this.mobileControls.right = true);
+            rightBtn.addEventListener('touchend', () => this.mobileControls.right = false);
+        }
+
+        if (fireBtn) {
+            fireBtn.addEventListener('touchstart', () => this.mobileControls.fire = true);
+            fireBtn.addEventListener('touchend', () => this.mobileControls.fire = false);
+        }
     }
 
     setupCollisions() {
-        // Проверяем коллизии в update
+        // Пули игрока и враги
+        this.physics.add.overlap(this.bullets, this.enemies, this.hitEnemy, null, this);
+        
+        // Игрок и враги
+        this.physics.add.overlap(this.player, this.enemies, this.hitPlayer, null, this);
+        
+        // Игрок и пули врагов
+        this.physics.add.overlap(this.player, this.enemyBullets, this.hitPlayer, null, this);
+        
+        // Игрок и бонусы
+        this.physics.add.overlap(this.player, this.powerUps, this.collectPowerUp, null, this);
     }
 
-    startGame() {
-        window.gameInstance.gameStarted = true;
-        
-        // Убираем инструкции
-        if (this.instructionText) {
-            this.instructionText.destroy();
-        }
-    }
+    spawnEnemy() {
+        if (window.gameInstance && window.gameInstance.gameOver) return;
 
-    startTimers() {
-        // Таймер добавления очков за выживание
-        this.time.addEvent({
-            delay: 1000,
-            callback: () => {
-                if (window.gameInstance.gameStarted && !window.gameInstance.gameOver) {
-                    window.gameInstance.updateScore(window.gameInstance.config.pointsPerSecond);
-                }
-            },
-            loop: true
-        });
+        const x = Phaser.Math.Between(50, 750);
+        const enemy = this.enemies.create(x, -50, 'enemy');
+        enemy.setVelocityY(window.gameInstance.config.enemySpeed * window.gameInstance.speed);
 
-        // Таймер создания препятствий
-        this.obstacleTimer = this.time.addEvent({
-            delay: window.gameInstance.spawnRate,
-            callback: this.spawnObstacle,
-            callbackScope: this,
-            loop: true
-        });
-
-        // Таймер создания бонусов
-        this.time.addEvent({
-            delay: 5000,
-            callback: this.spawnBonus,
-            callbackScope: this,
-            loop: true
-        });
-    }
-
-    spawnObstacle() {
-        if (!window.gameInstance.gameStarted || window.gameInstance.gameOver) return;
-
-        const y = Phaser.Math.Between(32, 568);
-        const obstacle = this.add.sprite(850, y, 'obstacle');
-        obstacle.setScale(Phaser.Math.FloatBetween(0.8, 1.5));
-        
-        // Добавляем вращение
-        this.tweens.add({
-            targets: obstacle,
-            rotation: 2 * Math.PI,
-            duration: 2000,
-            repeat: -1
-        });
-
-        this.obstacles.add(obstacle);
-
-        // Обновляем интервал появления препятствий
-        this.obstacleTimer.delay = window.gameInstance.spawnRate;
-    }
-
-    spawnBonus() {
-        if (!window.gameInstance.gameStarted || window.gameInstance.gameOver) return;
-
-        const y = Phaser.Math.Between(50, 550);
-        const bonus = this.add.sprite(850, y, 'bonus');
-        
-        // Добавляем мерцание
-        this.tweens.add({
-            targets: bonus,
-            alpha: 0.3,
-            duration: 500,
-            yoyo: true,
-            repeat: -1
-        });
-
-        this.bonuses.add(bonus);
-    }
-
-    createUI() {
-        // Индикатор уровня
-        const levelContainer = this.add.container(700, 50);
-        const levelBg = this.add.rectangle(0, 0, 100, 40, 0x000000, 0.7);
-        const levelText = this.add.text(0, 0, 'Уровень: 1', {
-            fontSize: '14px',
-            fill: '#ffffff',
-            fontWeight: 'bold'
-        }).setOrigin(0.5);
-        
-        levelContainer.add([levelBg, levelText]);
-        this.levelText = levelText;
-
-        // Полоса скорости
-        this.speedBar = this.add.graphics();
-        this.updateSpeedBar();
-
-        // Инструкции
-        if (!window.gameInstance.gameStarted) {
-            this.instructionText = this.add.text(400, 300, 
-                'Нажмите любую клавишу или\\nкасайтесь экрана для начала!\\n\\nИспользуйте стрелки или касания\\nдля управления', {
-                fontSize: '24px',
-                fill: '#ffffff',
-                align: 'center',
-                fontWeight: 'bold',
-                stroke: '#000000',
-                strokeThickness: 4
-            }).setOrigin(0.5);
-
-            // Мерцающий эффект
-            this.tweens.add({
-                targets: this.instructionText,
-                alpha: 0.5,
-                duration: 1000,
-                yoyo: true,
-                repeat: -1
-            });
-        }
-    }
-
-    updateSpeedBar() {
-        this.speedBar.clear();
-        
-        const barWidth = 200;
-        const barHeight = 10;
-        const x = 300;
-        const y = 30;
-        
-        // Фон полосы
-        this.speedBar.fillStyle(0x333333);
-        this.speedBar.fillRect(x, y, barWidth, barHeight);
-        
-        // Заполнение полосы
-        const progress = (window.gameInstance.speed - 100) / (window.gameInstance.config.maxSpeed - 100);
-        const fillWidth = barWidth * progress;
-        
-        this.speedBar.fillStyle(0xFF6600);
-        this.speedBar.fillRect(x, y, fillWidth, barHeight);
-    }
-
-    checkCollisions() {
-        // Проверяем столкновения с препятствиями
-        this.obstacles.children.entries.forEach(obstacle => {
-            if (Phaser.Geom.Intersects.RectangleToRectangle(
-                this.player.getBounds(),
-                obstacle.getBounds()
-            )) {
-                this.hitObstacle(obstacle);
-            }
-        });
-
-        // Проверяем столкновения с бонусами
-        this.bonuses.children.entries.forEach(bonus => {
-            if (Phaser.Geom.Intersects.RectangleToRectangle(
-                this.player.getBounds(),
-                bonus.getBounds()
-            )) {
-                this.collectBonus(bonus);
+        // Враги стреляют случайно
+        this.time.delayedCall(Phaser.Math.Between(1000, 3000), () => {
+            if (enemy.active) {
+                this.enemyFire(enemy);
             }
         });
     }
 
-    hitObstacle(obstacle) {
-        obstacle.destroy();
-        window.gameInstance.lives--;
-        window.gameInstance.updateUI();
-        this.soundManager.play('hurt');
+    spawnPowerUp() {
+        if (window.gameInstance && window.gameInstance.gameOver) return;
+        if (Math.random() > window.gameInstance.config.powerUpChance) return;
 
-        // Эффект тряски камеры
-        this.cameras.main.shake(200, 0.01);
+        const x = Phaser.Math.Between(50, 750);
+        const powerUp = this.powerUps.create(x, -50, 'powerUp');
+        powerUp.setVelocityY(100);
+    }
 
-        // Эффект красного экрана
-        const redFlash = this.add.rectangle(400, 300, 800, 600, 0xff0000, 0.5);
+    autoFire() {
+        if (window.gameInstance && window.gameInstance.gameOver) return;
+        if (this.spaceKey.isDown || this.mobileControls.fire) {
+            this.fire();
+        }
+    }
+
+    fire() {
+        const bullet = this.bullets.create(this.player.x, this.player.y - 16, 'bullet');
+        bullet.setVelocityY(-window.gameInstance.config.bulletSpeed);
+        
+        window.gameInstance.stats.bulletsShot++;
+        this.soundManager.play('shoot');
+
+        // Удаляем пулю когда она выходит за экран
+        this.time.delayedCall(2000, () => {
+            if (bullet.active) {
+                bullet.destroy();
+            }
+        });
+    }
+
+    enemyFire(enemy) {
+        if (!enemy.active) return;
+
+        const bullet = this.enemyBullets.create(enemy.x, enemy.y + 16, 'enemyBullet');
+        bullet.setVelocityY(200);
+
+        // Удаляем пулю когда она выходит за экран
+        this.time.delayedCall(3000, () => {
+            if (bullet.active) {
+                bullet.destroy();
+            }
+        });
+    }
+
+    hitEnemy(bullet, enemy) {
+        bullet.destroy();
+        enemy.destroy();
+        
+        if (window.gameInstance) {
+            window.gameInstance.destroyEnemy();
+        }
+        
+        this.soundManager.play('explosion');
+        
+        // Создаем простой эффект взрыва
+        const explosion = this.add.graphics();
+        explosion.fillStyle(0xffff00);
+        explosion.fillCircle(enemy.x, enemy.y, 20);
+        explosion.setAlpha(1);
+        
         this.tweens.add({
-            targets: redFlash,
+            targets: explosion,
             alpha: 0,
+            scaleX: 2,
+            scaleY: 2,
             duration: 200,
-            onComplete: () => redFlash.destroy()
+            onComplete: () => explosion.destroy()
         });
-
-        if (window.gameInstance.lives <= 0) {
-            this.gameOver();
-        }
     }
 
-    collectBonus(bonus) {
-        bonus.destroy();
-        window.gameInstance.updateScore(window.gameInstance.config.bonusPoints);
-        this.soundManager.play('coin');
-
-        // Эффект сбора бонуса
-        const particles = this.add.particles(bonus.x, bonus.y, 'bonus', {
-            speed: { min: 50, max: 100 },
-            scale: { start: 0.5, end: 0 },
-            lifespan: 300,
-            quantity: 5
-        });
-
-        this.time.delayedCall(300, () => particles.destroy());
-    }
-
-    gameOver() {
-        window.gameInstance.gameEnd();
-        
-        // Останавливаем все таймеры
-        this.obstacleTimer.destroy();
-
-        // Показываем экран окончания игры
-        const gameOverBg = this.add.rectangle(400, 300, 600, 400, 0x000000, 0.8);
-        
-        const gameOverText = this.add.text(400, 220, 'ИГРА ОКОНЧЕНА', {
-            fontSize: '48px',
-            fill: '#ff0000',
-            fontWeight: 'bold',
-            stroke: '#000000',
-            strokeThickness: 4
-        }).setOrigin(0.5);
-
-        const finalScoreText = this.add.text(400, 280, \`Финальный счёт: \${window.gameInstance.score}\`, {
-            fontSize: '24px',
-            fill: '#ffffff',
-            fontWeight: 'bold'
-        }).setOrigin(0.5);
-
-        const levelText = this.add.text(400, 310, \`Достигнут уровень: \${window.gameInstance.level}\`, {
-            fontSize: '20px',
-            fill: '#ffffff'
-        }).setOrigin(0.5);
-
-        const restartText = this.add.text(400, 360, 'Нажмите ПРОБЕЛ для перезапуска', {
-            fontSize: '20px',
-            fill: '#ffffff'
-        }).setOrigin(0.5);
-
-        // Кнопка для просмотра рекламы
-        const adButton = this.add.text(400, 410, 'Посмотреть рекламу (+1 жизнь)', {
-            fontSize: '18px',
-            fill: '#00ff00',
-            backgroundColor: '#000000',
-            padding: { x: 10, y: 5 }
-        }).setOrigin(0.5).setInteractive();
-
-        adButton.on('pointerdown', () => {
-            if (window.yandexSDK && window.yandexSDK.initialized) {
-                window.yandexSDK.showRewardedAd();
+    hitPlayer(player, object) {
+        if (window.gameInstance) {
+            window.gameInstance.lives--;
+            window.gameInstance.updateUI();
+            
+            if (window.gameInstance.lives <= 0) {
+                window.gameInstance.gameEnd();
+            } else {
+                // Временная неуязвимость
+                player.setTint(0xff0000);
+                this.time.delayedCall(1000, () => {
+                    player.clearTint();
+                });
             }
-        });
-
-        // Перезапуск игры
-        this.input.keyboard.once('keydown-SPACE', () => {
-            this.restartGame();
-        });
+        }
+        
+        if (object.destroy) {
+            object.destroy();
+        }
+        
+        this.soundManager.play('hit');
     }
 
-    restartGame() {
-        window.gameInstance = new ArcadeGame();
-        window.gameInstance.updateUI();
-        this.scene.restart();
+    collectPowerUp(player, powerUp) {
+        powerUp.destroy();
+        
+        if (window.gameInstance) {
+            window.gameInstance.stats.powerUpsCollected++;
+            window.gameInstance.updateScore(50);
+        }
+        
+        // Временное усиление
+        this.player.setTint(0x00ffff);
+        window.gameInstance.config.bulletSpeed *= 1.5;
+        
+        this.time.delayedCall(5000, () => {
+            this.player.clearTint();
+            window.gameInstance.config.bulletSpeed /= 1.5;
+        });
+        
+        this.soundManager.play('powerup');
     }
 
     update() {
-        if (!window.gameInstance.gameStarted || window.gameInstance.gameOver) return;
+        if (window.gameInstance && window.gameInstance.gameOver) return;
 
         // Управление игроком
-        if (this.cursors.up.isDown || this.wasdKeys.W.isDown) {
-            this.player.y = Math.max(32, this.player.y - window.gameInstance.config.playerSpeed * 0.016);
+        const isLeft = this.cursors.left.isDown || this.wasdKeys.A.isDown || this.mobileControls.left;
+        const isRight = this.cursors.right.isDown || this.wasdKeys.D.isDown || this.mobileControls.right;
+
+        if (isLeft) {
+            this.player.setVelocityX(-window.gameInstance.config.playerSpeed);
+        } else if (isRight) {
+            this.player.setVelocityX(window.gameInstance.config.playerSpeed);
+        } else {
+            this.player.setVelocityX(0);
         }
-        if (this.cursors.down.isDown || this.wasdKeys.S.isDown) {
-            this.player.y = Math.min(568, this.player.y + window.gameInstance.config.playerSpeed * 0.016);
+
+        // Движение звезд
+        this.stars.children.entries.forEach(star => {
+            star.y += 1 * window.gameInstance.speed;
+            if (star.y > 600) {
+                star.y = 0;
+                star.x = Phaser.Math.Between(0, 800);
+            }
+        });
+
+        // Удаляем объекты за экраном
+        this.cleanupOffScreenObjects();
+
+        // Обновляем скорость спавна врагов
+        if (this.spawnTimer) {
+            this.spawnTimer.delay = window.gameInstance.config.enemySpawnRate;
         }
+    }
 
-        // Движение препятствий
-        this.obstacles.children.entries.forEach(obstacle => {
-            obstacle.x -= window.gameInstance.speed * 0.016 * 60;
-            
-            if (obstacle.x < -32) {
-                obstacle.destroy();
+    cleanupOffScreenObjects() {
+        // Враги
+        this.enemies.children.entries.forEach(enemy => {
+            if (enemy.y > 650) {
+                enemy.destroy();
             }
         });
 
-        // Движение бонусов
-        this.bonuses.children.entries.forEach(bonus => {
-            bonus.x -= window.gameInstance.speed * 0.016 * 40;
-            
-            if (bonus.x < -24) {
-                bonus.destroy();
+        // Пули
+        this.bullets.children.entries.forEach(bullet => {
+            if (bullet.y < -50) {
+                bullet.destroy();
             }
         });
 
-        // Движение полос фона
-        this.stripes.children.entries.forEach(stripe => {
-            stripe.x -= window.gameInstance.speed * 0.016 * 30;
-            
-            if (stripe.x < -10) {
-                stripe.x = 810;
+        // Пули врагов
+        this.enemyBullets.children.entries.forEach(bullet => {
+            if (bullet.y > 650) {
+                bullet.destroy();
             }
         });
 
-        // Проверяем коллизии
-        this.checkCollisions();
+        // Бонусы
+        this.powerUps.children.entries.forEach(powerUp => {
+            if (powerUp.y > 650) {
+                powerUp.destroy();
+            }
+        });
+    }
 
-        // Обновляем UI
-        this.levelText.setText(\`Уровень: \${window.gameInstance.level}\`);
-        this.updateSpeedBar();
+    applyQuality(quality) {
+        switch (quality) {
+            case 'low':
+                this.stars.children.entries.forEach((star, index) => {
+                    if (index % 2 === 0) star.setVisible(false);
+                });
+                break;
+            case 'medium':
+                this.stars.children.entries.forEach(star => star.setVisible(true));
+                break;
+            case 'high':
+                this.stars.children.entries.forEach(star => star.setVisible(true));
+                // Добавляем дополнительные эффекты
+                break;
+        }
+    }
+}
+
+// Менеджер звуков для аркады
+class SoundManager {
+    constructor(scene) {
+        this.scene = scene;
+        this.sounds = {};
+        this.enabled = true;
+    }
+
+    preload() {
+        this.createSimpleSounds();
+    }
+
+    createSimpleSounds() {
+        this.sounds.shoot = null;
+        this.sounds.explosion = null;
+        this.sounds.hit = null;
+        this.sounds.powerup = null;
+    }
+
+    play(soundName) {
+        if (!this.enabled) return;
+        
+        try {
+            const context = new AudioContext();
+            const oscillator = context.createOscillator();
+            const gainNode = context.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(context.destination);
+            
+            switch (soundName) {
+                case 'shoot':
+                    oscillator.frequency.setValueAtTime(800, context.currentTime);
+                    gainNode.gain.setValueAtTime(0.1, context.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.1);
+                    oscillator.start(context.currentTime);
+                    oscillator.stop(context.currentTime + 0.1);
+                    break;
+                case 'explosion':
+                    oscillator.frequency.setValueAtTime(150, context.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(50, context.currentTime + 0.3);
+                    gainNode.gain.setValueAtTime(0.2, context.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.3);
+                    oscillator.start(context.currentTime);
+                    oscillator.stop(context.currentTime + 0.3);
+                    break;
+                case 'hit':
+                    oscillator.frequency.setValueAtTime(200, context.currentTime);
+                    oscillator.frequency.setValueAtTime(100, context.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.15, context.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.2);
+                    oscillator.start(context.currentTime);
+                    oscillator.stop(context.currentTime + 0.2);
+                    break;
+                case 'powerup':
+                    oscillator.frequency.setValueAtTime(440, context.currentTime);
+                    oscillator.frequency.setValueAtTime(880, context.currentTime + 0.1);
+                    oscillator.frequency.setValueAtTime(1320, context.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.1, context.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.3);
+                    oscillator.start(context.currentTime);
+                    oscillator.stop(context.currentTime + 0.3);
+                    break;
+            }
+        } catch (error) {
+            console.warn('Звук недоступен:', error);
+        }
+    }
+
+    setEnabled(enabled) {
+        this.enabled = enabled;
     }
 }
 
@@ -567,28 +914,88 @@ const config = {
     height: 600,
     parent: 'game',
     backgroundColor: '#000033',
-    scene: ArcadeScene
+    physics: {
+        default: 'arcade',
+        arcade: {
+            gravity: { y: 0 },
+            debug: false
+        }
+    },
+    scene: ArcadeScene,
+    scale: {
+        mode: Phaser.Scale.FIT,
+        autoCenter: Phaser.Scale.CENTER_BOTH
+    }
 };
 
-// Инициализация
-window.addEventListener('load', async () => {
-    // Инициализируем Yandex SDK
-    await window.yandexSDK.init();
+// Инициализация при загрузке
+document.addEventListener('DOMContentLoaded', async () => {
+    console.log('🎮 Инициализация аркадной игры...');
+    
+    // Ждем инициализации Yandex SDK
+    while (!window.yandexGamesSDK || !window.yandexGamesSDK.isReady()) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    console.log('🚀 Yandex Games SDK готов, запускаем аркадную игру');
     
     // Создаем экземпляр игры
     window.gameInstance = new ArcadeGame();
     window.gameInstance.updateUI();
     
-    // Добавляем индикатор уровня в UI
-    const levelDiv = document.createElement('div');
-    levelDiv.innerHTML = 'Уровень: <span id="level-value">1</span>';
-    levelDiv.style.marginBottom = '10px';
-    document.getElementById('ui-overlay').appendChild(levelDiv);
+    // Загружаем сохраненный прогресс
+    const savedData = await window.gameInstance.loadPlayerData();
+    if (savedData && savedData.highScore) {
+        console.log('💾 Загружен прогресс, лучший результат:', savedData.highScore);
+    }
     
-    // Запускаем игру
-    const game = new Phaser.Game(config);
-    window.game = game;
+    // Запускаем Phaser игру
+    window.game = new Phaser.Game(config);
+    
+    // Настраиваем UI события
+    setupUIEvents();
+    
+    // Отслеживаем начало игры
+    window.yandexGamesSDK.trackGameEvent('game_start', { 
+        gameType: 'arcade',
+        platform: window.yandexGamesSDK.deviceInfo?.type || 'unknown' 
+    });
 });
+
+// Настройка UI событий
+function setupUIEvents() {
+    const restartBtn = document.getElementById('restart-btn');
+    const rewardBtn = document.getElementById('reward-btn');
+    const leaderboardBtn = document.getElementById('leaderboard-btn');
+    
+    if (restartBtn) {
+        restartBtn.addEventListener('click', () => {
+            window.gameInstance.restart();
+        });
+    }
+    
+    if (rewardBtn) {
+        rewardBtn.addEventListener('click', () => {
+            if (window.yandexGamesSDK) {
+                window.yandexGamesSDK.showRewardedVideo('continue_game', () => {
+                    window.gameInstance.addReward();
+                });
+            }
+        });
+    }
+    
+    if (leaderboardBtn) {
+        leaderboardBtn.addEventListener('click', async () => {
+            if (window.yandexGamesSDK) {
+                const leaderboard = await window.yandexGamesSDK.getLeaderboard('arcade_score');
+                console.log('🏆 Таблица лидеров аркады:', leaderboard);
+            }
+        });
+    }
+}
+
+// Экспортируем для доступа из SDK
+window.ArcadeGame = ArcadeGame;
 `;
   }
 

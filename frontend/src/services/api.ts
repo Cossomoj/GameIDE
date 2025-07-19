@@ -8,132 +8,405 @@ import {
   HistoryStatistics,
   GenreStatistics,
 } from '@/types';
+import { toast } from 'react-hot-toast'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-
-// Создаем экземпляр axios с базовыми настройками
-const api = axios.create({
-  baseURL: `${API_BASE_URL}/api`,
-  timeout: 30000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
-
-// Интерцептор для обработки ошибок
-api.interceptors.response.use(
-  (response: AxiosResponse) => response,
-  (error) => {
-    if (error.response?.data?.message) {
-      error.message = error.response.data.message;
-    }
-    return Promise.reject(error);
+// Типы данных для API
+export interface GameCreationRequest {
+  title: string
+  genre: string
+  description: string
+  artStyle?: string
+  targetAudience?: string
+  monetization?: string[]
+  options?: {
+    quality?: 'fast' | 'balanced' | 'high'
+    optimization?: 'size' | 'performance'
   }
-);
+}
 
-// Games API
-export const gamesApi = {
-  // Создание новой игры
-  create: async (gameData: CreateGameRequest): Promise<Game> => {
-    const response = await api.post<ApiResponse<{ game: Game }>>('/games', gameData);
-    return response.data.data!.game;
-  },
+export interface GameCreationResponse {
+  success: boolean
+  game: {
+    id: string
+    title: string
+    description: string
+    status: 'queued' | 'generating' | 'completed' | 'failed'
+    progress: number
+    createdAt: string
+    generationPlan?: {
+      enabledStages: string[]
+      settings: any
+    }
+  }
+  message: string
+}
 
-  // Получение списка игр
-  getAll: async (params?: {
-    page?: number;
-    limit?: number;
-    status?: string;
-  }): Promise<PaginatedResponse<Game>> => {
-    const response = await api.get<PaginatedResponse<Game>>('/games', { params });
-    return response.data;
-  },
+export interface Game {
+  id: string
+  title: string
+  description: string
+  genre: string
+  status: 'queued' | 'generating' | 'completed' | 'failed'
+  progress: number
+  createdAt: string
+  updatedAt: string
+  downloadUrl?: string
+  thumbnailUrl?: string
+}
 
-  // Получение конкретной игры
-  getById: async (id: string): Promise<Game> => {
-    const response = await api.get<ApiResponse<{ game: Game }>>(`/games/${id}`);
-    return response.data.data!.game;
-  },
+export interface StatsResponse {
+  success: boolean
+  data: {
+    totalGames: number
+    completedGames: number
+    totalDownloads: number
+    totalPlayTime: number
+    averageRating: number
+    genreStats: { [genre: string]: number }
+    monthlyStats: Array<{
+      month: string
+      gamesCreated: number
+      downloads: number
+    }>
+  }
+}
 
-  // Получение статуса генерации
-  getStatus: async (id: string): Promise<any> => {
-    const response = await api.get<ApiResponse<{ status: any }>>(`/games/${id}/status`);
-    return response.data.data!.status;
-  },
+export interface AIModel {
+  id: string
+  name: string
+  description: string
+}
 
-  // Скачивание игры
-  download: async (id: string): Promise<Blob> => {
-    const response = await api.get(`/games/${id}/download`, {
-      responseType: 'blob',
-    });
-    return response.data;
-  },
+export interface AIModelsResponse {
+  success: boolean
+  provider?: string
+  models: AIModel[] | { [provider: string]: AIModel[] }
+  timestamp: string
+}
 
-  // Удаление игры
-  delete: async (id: string): Promise<void> => {
-    await api.delete(`/games/${id}`);
-  },
+export interface AIStatusResponse {
+  timestamp: string
+  services: {
+    [provider: string]: {
+      configured: boolean
+      status: 'online' | 'offline' | 'not_configured' | 'error'
+      available: boolean
+      model: string
+      apiKey?: string
+      apiKeyStatus: 'valid' | 'invalid' | 'error' | 'not_configured'
+      error?: string
+    }
+  }
+}
 
-  // Отмена генерации
-  cancel: async (id: string): Promise<void> => {
-    await api.post(`/games/${id}/cancel`);
-  },
-};
+export interface GenerationSettingsResponse {
+  success: boolean
+  settings: {
+    stages: {
+      [stageName: string]: {
+        enabled: boolean
+        provider: string
+      }
+    }
+  }
+  timestamp: string
+}
 
-// Statistics API
-export const statsApi = {
-  // Общая статистика
-  getOverall: async (): Promise<Statistics> => {
-    const response = await api.get<ApiResponse<{ stats: Statistics }>>('/stats');
-    return response.data.data!.stats;
-  },
+// Базовый URL API (будет определяться автоматически)
+const API_BASE_URL = process.env.NODE_ENV === 'production' 
+  ? '/api' 
+  : 'http://localhost:3001/api'
 
-  // Статистика за период
-  getHistory: async (days: number = 30): Promise<HistoryStatistics[]> => {
-    const response = await api.get<ApiResponse<{ statistics: HistoryStatistics[] }>>(
-      `/stats/history?days=${days}`
-    );
-    return response.data.data!.statistics;
-  },
+class APIClient {
+  private baseURL: string
 
-  // Статистика по жанрам
-  getGenres: async (): Promise<GenreStatistics[]> => {
-    const response = await api.get<ApiResponse<{ genres: GenreStatistics[] }>>('/stats/genres');
-    return response.data.data!.genres;
-  },
+  constructor() {
+    this.baseURL = API_BASE_URL
+  }
 
-  // Статистика производительности
-  getPerformance: async (): Promise<any> => {
-    const response = await api.get<ApiResponse<{ performance: any }>>('/stats/performance');
-    return response.data.data!.performance;
-  },
-};
+  // Базовый метод для HTTP запросов
+  private async request<T>(
+    endpoint: string, 
+    options: RequestInit = {}
+  ): Promise<T> {
+    const url = `${this.baseURL}${endpoint}`
+    
+    const config: RequestInit = {
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+      ...options,
+    }
 
-// Queue API
-export const queueApi = {
-  // Статистика очереди
-  getStats: async (): Promise<any> => {
-    const response = await api.get<ApiResponse<{ queue: any }>>('/queue/stats');
-    return response.data.data!.queue;
-  },
+    try {
+      console.log(`🌐 API Request: ${options.method || 'GET'} ${url}`)
+      
+      const response = await fetch(url, config)
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`)
+      }
 
-  // Приостановка очереди
-  pause: async (): Promise<void> => {
-    await api.post('/queue/pause');
-  },
+      const data = await response.json()
+      console.log(`✅ API Response:`, data)
+      
+      return data
+    } catch (error) {
+      console.error(`❌ API Error for ${url}:`, error)
+      
+      // Показываем пользователю уведомление об ошибке
+      if (error instanceof Error) {
+        toast.error(`Ошибка API: ${error.message}`)
+      } else {
+        toast.error('Произошла неизвестная ошибка')
+      }
+      
+      throw error
+    }
+  }
 
-  // Возобновление очереди
-  resume: async (): Promise<void> => {
-    await api.post('/queue/resume');
-  },
-};
+  // Методы для работы с играми
+  async createGame(gameData: GameCreationRequest): Promise<GameCreationResponse> {
+    return this.request<GameCreationResponse>('/games', {
+      method: 'POST',
+      body: JSON.stringify(gameData),
+    })
+  }
 
-// Health check
-export const healthApi = {
-  check: async (): Promise<any> => {
-    const response = await api.get('/health');
-    return response.data;
-  },
-};
+  async getGames(): Promise<{ success: boolean; games: Game[] }> {
+    return this.request<{ success: boolean; games: Game[] }>('/games')
+  }
 
-export default api; 
+  async getGame(gameId: string): Promise<{ success: boolean; game: Game }> {
+    return this.request<{ success: boolean; game: Game }>(`/games/${gameId}`)
+  }
+
+  async deleteGame(gameId: string): Promise<{ success: boolean; message: string }> {
+    return this.request<{ success: boolean; message: string }>(`/games/${gameId}`, {
+      method: 'DELETE',
+    })
+  }
+
+  // Методы для статистики
+  async getStats(): Promise<StatsResponse> {
+    return this.request<StatsResponse>('/stats')
+  }
+
+  // Методы для AI сервисов
+  async getAIStatus(): Promise<AIStatusResponse> {
+    return this.request<AIStatusResponse>('/ai/status')
+  }
+
+  async updateAISettings(provider: string, apiKey: string, model: string): Promise<{
+    success: boolean
+    message: string
+    apiKeyStatus: string
+    validation: any
+    envSaved: boolean
+  }> {
+    return this.request<any>('/ai/settings', {
+      method: 'POST',
+      body: JSON.stringify({ provider, apiKey, model }),
+    })
+  }
+
+  async getAISettings(): Promise<{
+    success: boolean
+    settings: {
+      [provider: string]: {
+        apiKey: string
+        model: string
+        configured: boolean
+      }
+    }
+  }> {
+    return this.request<any>('/ai/settings')
+  }
+
+  async validateModel(provider: string, model: string, apiKey?: string): Promise<{
+    success: boolean
+    valid: boolean
+    error?: string
+    availableModels?: Array<{ id: string; name: string }>
+  }> {
+    return this.request<any>('/ai/validate-model', {
+      method: 'POST',
+      body: JSON.stringify({ provider, model, apiKey }),
+    })
+  }
+
+  // Новые методы для работы с моделями AI
+  async getAIModels(provider?: string): Promise<AIModelsResponse> {
+    const endpoint = provider ? `/ai/models/${provider}` : '/ai/models'
+    return this.request<AIModelsResponse>(endpoint)
+  }
+
+  async getAIModelsByProvider(provider: string): Promise<{
+    success: boolean
+    provider: string
+    models: AIModel[]
+  }> {
+    return this.request<any>(`/ai/models/${provider}`)
+  }
+
+  // Методы для настроек генерации
+  async getGenerationSettings(): Promise<GenerationSettingsResponse> {
+    return this.request<GenerationSettingsResponse>('/generation/settings')
+  }
+
+  async updateGenerationSettings(stages: {
+    [stageName: string]: {
+      enabled: boolean
+      provider: string
+    }
+  }): Promise<{
+    success: boolean
+    message: string
+    settings: any
+  }> {
+    return this.request<any>('/generation/settings', {
+      method: 'POST',
+      body: JSON.stringify({ stages }),
+    })
+  }
+
+  // Health check
+  async checkHealth(): Promise<{
+    status: string
+    timestamp: string
+    uptime: number
+    environment: string
+    version: string
+    services: { [key: string]: string }
+  }> {
+    return this.request<{
+      status: string
+      timestamp: string
+      uptime: number
+      environment: string
+      version: string
+      services: { [key: string]: string }
+    }>('/health')
+  }
+
+  // Методы для интерактивной генерации
+  async startInteractiveGeneration(data: {
+    title: string
+    description: string
+    genre?: string
+    userId?: string
+  }): Promise<{
+    success: boolean
+    data: {
+      gameId: string
+      currentStep: number
+      totalSteps: number
+      step: any
+    }
+  }> {
+    return this.request<any>('/interactive/start', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  }
+
+  // Методы для достижений
+  async getAchievements(userId: string): Promise<{
+    success: boolean
+    achievements: Array<{
+      id: string
+      title: string
+      description: string
+      progress: number
+      maxProgress: number
+      unlocked: boolean
+      unlockedAt?: string
+    }>
+  }> {
+    return this.request<any>(`/achievements?userId=${userId}`)
+  }
+
+  // Методы для таблицы лидеров
+  async getLeaderboards(): Promise<{
+    success: boolean
+    leaderboards: Array<{
+      id: string
+      name: string
+      type: string
+      entries: Array<{
+        userId: string
+        username: string
+        score: number
+        rank: number
+      }>
+    }>
+  }> {
+    return this.request<any>('/leaderboards')
+  }
+
+  // Методы для социальных функций
+  async getFriends(userId: string): Promise<{
+    success: boolean
+    friends: Array<{
+      id: string
+      username: string
+      status: 'online' | 'offline'
+      lastSeen: string
+    }>
+  }> {
+    return this.request<any>(`/social/friends?userId=${userId}`)
+  }
+
+  async getSocialFeed(userId: string): Promise<{
+    success: boolean
+    activities: Array<{
+      id: string
+      userId: string
+      username: string
+      type: string
+      description: string
+      timestamp: string
+    }>
+  }> {
+    return this.request<any>(`/social/feed?userId=${userId}`)
+  }
+}
+
+// Экспортируем единственный экземпляр API клиента
+export const apiClient = new APIClient()
+
+// Экспортируем отдельные методы для удобства
+export const gameAPI = {
+  create: (data: GameCreationRequest) => apiClient.createGame(data),
+  getAll: () => apiClient.getGames(),
+  getById: (id: string) => apiClient.getGame(id),
+  delete: (id: string) => apiClient.deleteGame(id),
+}
+
+export const statsAPI = {
+  get: () => apiClient.getStats(),
+}
+
+export const aiAPI = {
+  getStatus: () => apiClient.getAIStatus(),
+  updateSettings: (provider: string, apiKey: string, model: string) => 
+    apiClient.updateAISettings(provider, apiKey, model),
+  getSettings: () => apiClient.getAISettings(),
+  getModels: (provider?: string) => apiClient.getAIModels(provider),
+  getModelsByProvider: (provider: string) => apiClient.getAIModelsByProvider(provider),
+  validateModel: (provider: string, model: string, apiKey?: string) => 
+    apiClient.validateModel(provider, model, apiKey),
+}
+
+export const generationAPI = {
+  getSettings: () => apiClient.getGenerationSettings(),
+  updateSettings: (stages: any) => apiClient.updateGenerationSettings(stages),
+}
+
+export const healthAPI = {
+  check: () => apiClient.checkHealth(),
+}
+
+export default apiClient 
