@@ -232,19 +232,26 @@ export interface GenerationConfig {
 
 export interface DatabaseEntity {
   id: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface GameEntity extends DatabaseEntity {
   title: string;
   description: string;
-  prompt: string; // JSON
-  gameDesign: string; // JSON
+  genre: string;
   status: GenerationStatus;
   progress: number;
+  config: any; // Конфигурация игры (JSON)
+  assets?: any; // Ассеты игры (JSON)
+  metadata?: any; // Дополнительные метаданные (JSON)
   filePath?: string;
-  size?: number;
+  sizeBytes?: number;
+  userId?: string;
+  // Для обратной совместимости
+  prompt?: string; // JSON (deprecated, используйте config)
+  gameDesign?: string; // JSON (deprecated, используйте config)
+  size?: number; // deprecated, используйте sizeBytes
   error?: string;
 }
 
@@ -261,4 +268,78 @@ export interface GamePrompt {
   artStyle?: string;
   targetAudience?: string;
   monetization?: string[];
+}
+
+export interface AIServiceHealth {
+  serviceName: string;
+  status: 'healthy' | 'degraded' | 'unhealthy' | 'offline';
+  responseTime: number;
+  uptime: number;
+  errorRate: number;
+  lastCheck: Date;
+  metrics: {
+    requestsPerMinute: number;
+    successRate: number;
+    averageResponseTime: number;
+    tokensPerSecond: number;
+    queueLength: number;
+  };
+  errors: Array<{
+    timestamp: Date;
+    error: string;
+    context?: any;
+  }>;
+}
+
+export interface AIHealthReport {
+  timestamp: Date;
+  overallStatus: 'healthy' | 'degraded' | 'critical';
+  services: AIServiceHealth[];
+  summary: {
+    totalServices: number;
+    healthyServices: number;
+    degradedServices: number;
+    unhealthyServices: number;
+  };
+  failoverStatus: {
+    isActive: boolean;
+    activeService: string;
+    backupServices: string[];
+  };
+  recommendations: Array<{
+    priority: 'high' | 'medium' | 'low';
+    message: string;
+    action: string;
+  }>;
+}
+
+export interface AlertConfig {
+  id: string;
+  name: string;
+  type: 'email' | 'webhook' | 'slack' | 'telegram';
+  enabled: boolean;
+  triggers: {
+    serviceDown: boolean;
+    highErrorRate: boolean;
+    slowResponse: boolean;
+    failoverActivated: boolean;
+  };
+  thresholds: {
+    errorRatePercent: number;
+    responseTimeMs: number;
+    uptimePercent: number;
+  };
+  recipients: string[];
+}
+
+export interface Alert {
+  id: string;
+  timestamp: Date;
+  type: 'service_down' | 'high_error_rate' | 'slow_response' | 'failover_activated' | 'service_recovered';
+  severity: 'info' | 'warning' | 'critical';
+  service: string;
+  message: string;
+  details: any;
+  resolved: boolean;
+  resolvedAt?: Date;
 } 

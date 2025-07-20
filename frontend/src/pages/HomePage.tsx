@@ -14,6 +14,8 @@ import {
   Info
 } from 'lucide-react'
 import { useCreateGame } from '@/hooks/useGames'
+import { apiClient } from '@/services/api'
+import { getUserId } from '@/utils/userUtils'
 import { 
   GENRES, 
   ART_STYLES, 
@@ -40,6 +42,7 @@ type GameFormData = z.infer<typeof gameFormSchema>
 const HomePage = () => {
   const navigate = useNavigate()
   const [selectedMonetization, setSelectedMonetization] = useState<string[]>([])
+  const [generationMode, setGenerationMode] = useState<'automatic' | 'interactive'>('interactive')
   const createGameMutation = useCreateGame()
 
   const {
@@ -66,8 +69,22 @@ const HomePage = () => {
         monetization: selectedMonetization,
       }
       
-      const game = await createGameMutation.mutateAsync(gameData)
-      navigate(`/games/${game.id}`)
+      if (generationMode === 'interactive') {
+        // Интерактивная генерация
+        const response = await apiClient.startInteractiveGeneration({
+          title: gameData.title,
+          description: gameData.description,
+          genre: gameData.genre,
+          userId: getUserId(),
+          quality: gameData.quality,
+        });
+        
+        navigate(`/interactive/${response.data.gameId}`)
+      } else {
+        // Автоматическая генерация
+        const game = await createGameMutation.mutateAsync(gameData)
+        navigate(`/games/${game.id}`)
+      }
     } catch (error) {
       console.error('Ошибка создания игры:', error)
     }
@@ -266,6 +283,87 @@ const HomePage = () => {
               </div>
             </div>
 
+            {/* Режим генерации */}
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                <Sparkles className="h-5 w-5 mr-2 text-blue-600" />
+                Режим создания игры
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <label className={`cursor-pointer rounded-lg border-2 p-4 transition-all ${
+                  generationMode === 'automatic' 
+                    ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200' 
+                    : 'border-gray-200 bg-white hover:border-gray-300'
+                }`}>
+                  <input
+                    type="radio"
+                    name="generationMode"
+                    value="automatic"
+                    checked={generationMode === 'automatic'}
+                    onChange={(e) => setGenerationMode(e.target.value as 'automatic')}
+                    className="sr-only"
+                  />
+                  <div className="flex items-start">
+                    <div className="flex-shrink-0">
+                      <Zap className="h-6 w-6 text-blue-600 mt-1" />
+                    </div>
+                    <div className="ml-3">
+                      <div className="text-sm font-semibold text-gray-900">
+                        Автоматическое создание
+                      </div>
+                      <div className="text-sm text-gray-600 mt-1">
+                        ИИ создаст игру полностью автоматически на основе вашего описания. Быстро и просто!
+                      </div>
+                    </div>
+                  </div>
+                </label>
+                
+                <label className={`cursor-pointer rounded-lg border-2 p-4 transition-all ${
+                  generationMode === 'interactive' 
+                    ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200' 
+                    : 'border-gray-200 bg-white hover:border-gray-300'
+                }`}>
+                  <input
+                    type="radio"
+                    name="generationMode"
+                    value="interactive"
+                    checked={generationMode === 'interactive'}
+                    onChange={(e) => setGenerationMode(e.target.value as 'interactive')}
+                    className="sr-only"
+                  />
+                  <div className="flex items-start">
+                    <div className="flex-shrink-0">
+                      <CheckCircle className="h-6 w-6 text-green-600 mt-1" />
+                    </div>
+                    <div className="ml-3">
+                      <div className="text-sm font-semibold text-gray-900">
+                        Интерактивное создание ⭐
+                      </div>
+                      <div className="text-sm text-gray-600 mt-1">
+                        Участвуйте в процессе! Выбирайте варианты на каждом этапе: персонажи, уровни, графика.
+                      </div>
+                    </div>
+                  </div>
+                </label>
+              </div>
+              
+              {generationMode === 'interactive' && (
+                <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+                  <div className="flex items-start">
+                    <CheckCircle className="h-5 w-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <div className="ml-3">
+                      <p className="text-sm font-medium text-green-800">
+                        Интерактивный режим включен!
+                      </p>
+                      <p className="text-sm text-green-700 mt-1">
+                        После нажатия "Создать игру" вы сможете выбирать из 3-5 вариантов на каждом этапе создания.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Настройки генерации */}
             <div className="bg-gray-50 rounded-lg p-6 space-y-6">
               <h3 className="text-lg font-semibold text-gray-900">
@@ -352,18 +450,32 @@ const HomePage = () => {
               <button
                 type="submit"
                 disabled={createGameMutation.isPending}
-                className="btn-primary btn-lg inline-flex items-center"
+                className={`btn-lg inline-flex items-center text-white px-8 py-4 rounded-lg font-semibold transition-all ${
+                  generationMode === 'interactive'
+                    ? 'bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 shadow-lg'
+                    : 'bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 shadow-lg'
+                }`}
               >
                 {createGameMutation.isPending ? (
                   <>
                     <div className="spinner mr-2" />
-                    Создание игры...
+                    {generationMode === 'interactive' ? 'Запуск интерактивной генерации...' : 'Создание игры...'}
                   </>
                 ) : (
                   <>
-                    <Zap className="h-5 w-5 mr-2" />
-                    Создать игру
-                    <ArrowRight className="h-5 w-5 ml-2" />
+                    {generationMode === 'interactive' ? (
+                      <>
+                        <CheckCircle className="h-5 w-5 mr-2" />
+                        🎮 Создать игру интерактивно
+                        <ArrowRight className="h-5 w-5 ml-2" />
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="h-5 w-5 mr-2" />
+                        ⚡ Создать игру автоматически
+                        <ArrowRight className="h-5 w-5 ml-2" />
+                      </>
+                    )}
                   </>
                 )}
               </button>

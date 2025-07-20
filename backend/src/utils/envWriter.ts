@@ -10,8 +10,14 @@ class EnvWriter {
 
   constructor() {
     // Используем корневой .env файл проекта, смонтированный в контейнер
-    this.envFilePath = path.join(process.cwd(), '.env.root')
+    this.envFilePath = '/app/.env'
     console.log('📁 EnvWriter инициализирован с путем к корневому .env:', this.envFilePath)
+  }
+
+  // Метод для обновления пути к .env файлу
+  set envPath(newPath: string) {
+    this.envFilePath = newPath
+    console.log('📁 EnvWriter путь обновлен:', this.envFilePath)
   }
 
   // Чтение всех переменных из .env файла

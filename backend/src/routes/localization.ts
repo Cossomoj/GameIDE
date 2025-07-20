@@ -1,7 +1,9 @@
 import { Router, Request, Response } from 'express';
 import { localizationService, LanguageData, Translation } from '../services/localization';
+import { LoggerService } from '@/services/logger';
 
 const router = Router();
+const logger = new LoggerService();
 
 /**
  * Получить список поддерживаемых языков
@@ -18,13 +20,18 @@ router.get('/languages', (req: Request, res: Response) => {
         nativeName: lang.nativeName,
         flag: lang.flag,
         rtl: lang.rtl || false
-      }))
+      })),
+      meta: {
+        total: languages.length,
+        timestamp: new Date().toISOString()
+      }
     });
   } catch (error) {
-    console.error('Ошибка получения языков:', error);
+    logger.error('Ошибка получения языков', { error });
     res.status(500).json({
       success: false,
-      error: 'Внутренняя ошибка сервера'
+      error: 'Failed to fetch supported languages',
+      message: 'Не удалось получить список поддерживаемых языков'
     });
   }
 });
@@ -48,13 +55,17 @@ router.get('/translations/:languageCode', (req: Request, res: Response) => {
     res.json({
       success: true,
       languageCode,
-      translations
+      translations,
+      meta: {
+        timestamp: new Date().toISOString()
+      }
     });
   } catch (error) {
-    console.error('Ошибка получения переводов:', error);
+    logger.error('Ошибка получения переводов', { error, language: req.params.languageCode });
     res.status(500).json({
       success: false,
-      error: 'Внутренняя ошибка сервера'
+      error: 'Failed to fetch translations',
+      message: 'Не удалось получить переводы'
     });
   }
 });
@@ -79,13 +90,20 @@ router.get('/translations/:languageCode/:namespace', (req: Request, res: Respons
       success: true,
       languageCode,
       namespace,
-      translations
+      translations,
+      meta: {
+        timestamp: new Date().toISOString()
+      }
     });
   } catch (error) {
-    console.error('Ошибка получения переводов неймспейса:', error);
+    logger.error('Ошибка получения переводов неймспейса', { 
+      error, 
+      languageCode: req.params.languageCode, 
+      namespace: req.params.namespace 
+    });
     res.status(500).json({
       success: false,
-      error: 'Внутренняя ошибка сервера'
+      error: 'Failed to fetch namespace translations'
     });
   }
 });
@@ -106,13 +124,20 @@ router.get('/translate/:languageCode/:key(*)', (req: Request, res: Response) => 
       languageCode,
       key,
       translation,
-      params
+      params,
+      meta: {
+        timestamp: new Date().toISOString()
+      }
     });
   } catch (error) {
-    console.error('Ошибка получения перевода:', error);
+    logger.error('Ошибка получения перевода', { 
+      error, 
+      key: req.params.key, 
+      language: req.params.languageCode 
+    });
     res.status(500).json({
       success: false,
-      error: 'Внутренняя ошибка сервера'
+      error: 'Failed to fetch translation'
     });
   }
 });
@@ -142,13 +167,21 @@ router.get('/plural/:languageCode/:key(*)/:count', (req: Request, res: Response)
       key,
       count,
       translation,
-      params
+      params,
+      meta: {
+        timestamp: new Date().toISOString()
+      }
     });
   } catch (error) {
-    console.error('Ошибка получения множественного числа:', error);
+    logger.error('Ошибка получения множественного числа', { 
+      error, 
+      key: req.params.key, 
+      language: req.params.languageCode,
+      count: req.params.count 
+    });
     res.status(500).json({
       success: false,
-      error: 'Внутренняя ошибка сервера'
+      error: 'Failed to fetch plural form'
     });
   }
 });
@@ -173,13 +206,17 @@ router.get('/detect', (req: Request, res: Response) => {
         flag: languageData.flag,
         rtl: languageData.rtl || false
       } : null,
-      acceptLanguage
+      acceptLanguage,
+      meta: {
+        timestamp: new Date().toISOString()
+      }
     });
   } catch (error) {
-    console.error('Ошибка определения языка:', error);
+    logger.error('Ошибка определения языка', { error });
     res.status(500).json({
       success: false,
-      error: 'Внутренняя ошибка сервера'
+      error: 'Failed to detect language',
+      message: 'Не удалось определить язык пользователя'
     });
   }
 });
@@ -202,10 +239,11 @@ router.get('/export/:languageCode?', (req: Request, res: Response) => {
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(translationsJson);
   } catch (error) {
-    console.error('Ошибка экспорта переводов:', error);
+    logger.error('Ошибка экспорта переводов', { error });
     res.status(500).json({
       success: false,
-      error: 'Внутренняя ошибка сервера'
+      error: 'Failed to export translations',
+      message: 'Не удалось экспортировать переводы'
     });
   }
 });
@@ -236,13 +274,17 @@ router.post('/import', (req: Request, res: Response) => {
 
     res.json({
       success: true,
-      message: 'Переводы успешно импортированы'
+      message: 'Переводы успешно импортированы',
+      meta: {
+        timestamp: new Date().toISOString()
+      }
     });
   } catch (error) {
-    console.error('Ошибка импорта переводов:', error);
+    logger.error('Ошибка импорта переводов', { error });
     res.status(500).json({
       success: false,
-      error: 'Внутренняя ошибка сервера'
+      error: 'Failed to import translations',
+      message: 'Не удалось импортировать переводы'
     });
   }
 });
@@ -278,13 +320,17 @@ router.put('/translations/:languageCode/:namespace', (req: Request, res: Respons
 
     res.json({
       success: true,
-      message: 'Переводы успешно обновлены'
+      message: 'Переводы успешно обновлены',
+      meta: {
+        timestamp: new Date().toISOString()
+      }
     });
   } catch (error) {
-    console.error('Ошибка обновления переводов:', error);
+    logger.error('Ошибка обновления переводов', { error });
     res.status(500).json({
       success: false,
-      error: 'Внутренняя ошибка сервера'
+      error: 'Failed to update translations',
+      message: 'Не удалось обновить переводы'
     });
   }
 });
@@ -313,13 +359,17 @@ router.get('/language/:languageCode', (req: Request, res: Response) => {
         nativeName: language.nativeName,
         flag: language.flag,
         rtl: language.rtl || false
+      },
+      meta: {
+        timestamp: new Date().toISOString()
       }
     });
   } catch (error) {
-    console.error('Ошибка получения информации о языке:', error);
+    logger.error('Ошибка получения информации о языке', { error });
     res.status(500).json({
       success: false,
-      error: 'Внутренняя ошибка сервера'
+      error: 'Failed to fetch language information',
+      message: 'Не удалось получить информацию о языке'
     });
   }
 });
@@ -374,13 +424,17 @@ router.get('/search/:languageCode', (req: Request, res: Response) => {
       success: true,
       languageCode,
       query,
-      results: results.slice(0, 50) // Ограничиваем результаты
+      results: results.slice(0, 50), // Ограничиваем результаты
+      meta: {
+        timestamp: new Date().toISOString()
+      }
     });
   } catch (error) {
-    console.error('Ошибка поиска переводов:', error);
+    logger.error('Ошибка поиска переводов', { error });
     res.status(500).json({
       success: false,
-      error: 'Внутренняя ошибка сервера'
+      error: 'Failed to search translations',
+      message: 'Не удалось выполнить поиск переводов'
     });
   }
 });

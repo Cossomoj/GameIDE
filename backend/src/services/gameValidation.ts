@@ -62,24 +62,81 @@ export interface GameFile {
   type: 'html' | 'js' | 'css' | 'image' | 'audio' | 'data';
   checksum: string;
   compressed: boolean;
+  content?: string;
 }
 
 export interface ValidationResult {
-  ruleId: string;
-  passed: boolean;
+  isValid: boolean;
+  errors: ValidationError[];
+  warnings: ValidationWarning[];
+  size: number;
+  structure: FileStructureCheck;
+  sdk: SDKIntegrationCheck;
+  csp: CSPValidationResult;
+  performance: PerformanceCheck;
+  accessibility: AccessibilityCheck;
+}
+
+export interface ValidationError {
+  type: 'critical' | 'blocking' | 'warning';
+  category: 'structure' | 'size' | 'sdk' | 'csp' | 'performance' | 'content';
   message: string;
-  details?: string;
-  suggestion?: string;
-  autoFix?: {
-    available: boolean;
-    description: string;
-    action: () => Promise<boolean>;
-  };
-  evidence?: {
-    files?: string[];
-    code?: string;
-    metrics?: Record<string, number>;
-  };
+  file?: string;
+  line?: number;
+  solution?: string;
+}
+
+export interface ValidationWarning {
+  type: 'optimization' | 'recommendation' | 'best_practice';
+  category: string;
+  message: string;
+  file?: string;
+  impact: 'low' | 'medium' | 'high';
+}
+
+export interface FileStructureCheck {
+  hasIndexHtml: boolean;
+  hasRequiredAssets: boolean;
+  properFileNames: boolean;
+  supportedFileTypes: boolean;
+  fileCount: number;
+  directory: string[];
+}
+
+export interface SDKIntegrationCheck {
+  hasSDKScript: boolean;
+  hasProperInit: boolean;
+  hasAdIntegration: boolean;
+  hasLeaderboardIntegration: boolean;
+  hasAchievementIntegration: boolean;
+  hasLanguageDetection: boolean;
+  hasLifecycleHandling: boolean;
+  errors: string[];
+  recommendations: string[];
+}
+
+export interface CSPValidationResult {
+  isValid: boolean;
+  hasCSPHeader: boolean;
+  allowsRequiredSources: boolean;
+  blocksUnsafeSources: boolean;
+  issues: string[];
+}
+
+export interface PerformanceCheck {
+  estimatedLoadTime: number;
+  hasOptimizedAssets: boolean;
+  hasMinifiedCode: boolean;
+  hasProgressiveLoading: boolean;
+  recommendations: string[];
+}
+
+export interface AccessibilityCheck {
+  hasLanguageSupport: boolean;
+  hasMobileSupport: boolean;
+  hasKeyboardSupport: boolean;
+  hasProperContrast: boolean;
+  issues: string[];
 }
 
 export interface ValidationReport {
@@ -245,7 +302,7 @@ class GameValidationService extends EventEmitter {
   }
 
   // Основной метод валидации игры
-  async validateGame(gameData: GameData): Promise<ValidationReport> {
+  async validateGame(gameData: GameData): Promise<ValidationResult> {
     logger.info(`Starting validation for game: ${gameData.id}`);
     
     const startTime = Date.now();
@@ -261,10 +318,57 @@ class GameValidationService extends EventEmitter {
       } catch (error) {
         logger.error(`Error running validation rule ${rule.id}:`, error);
         results.push({
-          ruleId: rule.id,
-          passed: false,
-          message: `Ошибка выполнения правила: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          details: 'Внутренняя ошибка валидатора'
+          isValid: false,
+          errors: [
+            {
+              type: 'critical',
+              category: rule.category,
+              message: `Ошибка выполнения правила: ${error instanceof Error ? error.message : 'Unknown error'}`,
+              solution: 'Внутренняя ошибка валидатора'
+            }
+          ],
+          warnings: [],
+          size: 0,
+          structure: {
+            hasIndexHtml: false,
+            hasRequiredAssets: false,
+            properFileNames: false,
+            supportedFileTypes: false,
+            fileCount: 0,
+            directory: []
+          },
+          sdk: {
+            hasSDKScript: false,
+            hasProperInit: false,
+            hasAdIntegration: false,
+            hasLeaderboardIntegration: false,
+            hasAchievementIntegration: false,
+            hasLanguageDetection: false,
+            hasLifecycleHandling: false,
+            errors: [],
+            recommendations: []
+          },
+          csp: {
+            isValid: false,
+            hasCSPHeader: false,
+            allowsRequiredSources: false,
+            blocksUnsafeSources: false,
+            issues: []
+          },
+          performance: {
+            estimatedLoadTime: 0,
+            hasOptimizedAssets: false,
+            hasMinifiedCode: false,
+            hasProgressiveLoading: false,
+            recommendations: []
+          },
+          accessibility: {
+            hasLanguageSupport: false,
+            hasMobileSupport: false,
+            hasKeyboardSupport: false,
+            hasProperContrast: false,
+            issues: []
+          }
         });
       }
     }
@@ -294,21 +398,21 @@ class GameValidationService extends EventEmitter {
     });
 
     this.emit('validation-completed', { gameId: gameData.id, report });
-    return report;
+    return report.results[0] as ValidationResult;
   }
 
   // Генерация отчета
   private generateReport(gameId: string, results: ValidationResult[]): ValidationReport {
-    const passed = results.filter(r => r.passed).length;
-    const failed = results.filter(r => !r.passed).length;
-    const errors = results.filter(r => !r.passed && this.getRuleSeverity(r.ruleId) === 'error').length;
-    const warnings = results.filter(r => !r.passed && this.getRuleSeverity(r.ruleId) === 'warning').length;
+    const passed = results.filter(r => r.isValid).length;
+    const failed = results.filter(r => !r.isValid).length;
+    const errors = results.filter(r => !r.isValid && r.errors.length > 0).length;
+    const warnings = results.filter(r => !r.isValid && r.warnings.length > 0).length;
 
     // Вычисляем общий балл (0-100)
     const requiredRules = Array.from(this.rules.values()).filter(r => r.required);
     const requiredPassed = results.filter(r => {
       const rule = this.rules.get(r.ruleId);
-      return rule?.required && r.passed;
+      return rule?.required && r.isValid;
     }).length;
 
     const baseScore = (requiredPassed / requiredRules.length) * 70; // 70% за обязательные правила
@@ -362,7 +466,7 @@ class GameValidationService extends EventEmitter {
   // Генерация рекомендаций
   private generateRecommendations(results: ValidationResult[]): string[] {
     const recommendations: string[] = [];
-    const failedResults = results.filter(r => !r.passed);
+    const failedResults = results.filter(r => !r.isValid);
 
     // Приоритизируем критические ошибки
     const criticalErrors = failedResults.filter(r => this.getRuleSeverity(r.ruleId) === 'error');
@@ -391,7 +495,7 @@ class GameValidationService extends EventEmitter {
     // Автоисправления
     const autoFixableIssues = failedResults.filter(r => {
       const rule = this.rules.get(r.ruleId);
-      return rule?.autoFixable && r.autoFix?.available;
+      return rule?.autoFixable && r.isValid;
     });
     if (autoFixableIssues.length > 0) {
       recommendations.push(`${autoFixableIssues.length} проблем можно исправить автоматически`);
@@ -402,7 +506,7 @@ class GameValidationService extends EventEmitter {
 
   // Оценка времени исправления
   private estimateFixTime(results: ValidationResult[]): number {
-    const failedResults = results.filter(r => !r.passed);
+    const failedResults = results.filter(r => !r.isValid);
     let totalTime = 0;
 
     failedResults.forEach(result => {
@@ -447,15 +551,15 @@ class GameValidationService extends EventEmitter {
     ];
 
     const requiredResults = results.filter(r => requiredForYandex.includes(r.ruleId));
-    const passedRequired = requiredResults.filter(r => r.passed).length;
+    const passedRequired = requiredResults.filter(r => r.isValid).length;
     const score = Math.round((passedRequired / requiredForYandex.length) * 100);
 
     const requiredFixes = requiredResults
-      .filter(r => !r.passed)
+      .filter(r => !r.isValid)
       .map(r => this.rules.get(r.ruleId)?.name || r.ruleId);
 
     const optionalImprovements = results
-      .filter(r => !requiredForYandex.includes(r.ruleId) && !r.passed)
+      .filter(r => !requiredForYandex.includes(r.ruleId) && !r.isValid)
       .map(r => this.rules.get(r.ruleId)?.name || r.ruleId);
 
     return {
@@ -473,20 +577,62 @@ class GameValidationService extends EventEmitter {
     const limitMB = 50;
     const limitBytes = limitMB * 1024 * 1024;
 
-    const passed = totalSize <= limitBytes;
+    const isValid = totalSize <= limitBytes;
     const sizeMB = (totalSize / 1024 / 1024).toFixed(2);
 
     return {
-      ruleId: 'file_size_limit',
-      passed,
-      message: passed 
-        ? `Размер игры (${sizeMB}MB) в пределах лимита`
-        : `Размер игры (${sizeMB}MB) превышает лимит ${limitMB}MB`,
-      details: `Общий размер файлов: ${totalSize} байт`,
-      suggestion: passed ? undefined : 'Оптимизируйте изображения и звуки, удалите неиспользуемые файлы',
-      evidence: {
-        files: game.files.sort((a, b) => b.size - a.size).slice(0, 5).map(f => `${f.name} (${(f.size / 1024).toFixed(1)}KB)`),
-        metrics: { totalSizeBytes: totalSize, totalSizeMB: parseFloat(sizeMB) }
+      isValid,
+      errors: isValid ? [] : [
+        {
+          type: 'critical',
+          category: 'size',
+          message: isValid 
+            ? `Размер игры (${sizeMB}MB) в пределах лимита`
+            : `Размер игры (${sizeMB}MB) превышает лимит ${limitMB}MB`,
+          solution: isValid ? undefined : 'Оптимизируйте изображения и звуки, удалите неиспользуемые файлы'
+        }
+      ],
+      warnings: [],
+      size: totalSize,
+      structure: {
+        hasIndexHtml: false,
+        hasRequiredAssets: false,
+        properFileNames: false,
+        supportedFileTypes: false,
+        fileCount: 0,
+        directory: []
+      },
+      sdk: {
+        hasSDKScript: false,
+        hasProperInit: false,
+        hasAdIntegration: false,
+        hasLeaderboardIntegration: false,
+        hasAchievementIntegration: false,
+        hasLanguageDetection: false,
+        hasLifecycleHandling: false,
+        errors: [],
+        recommendations: []
+      },
+      csp: {
+        isValid: false,
+        hasCSPHeader: false,
+        allowsRequiredSources: false,
+        blocksUnsafeSources: false,
+        issues: []
+      },
+      performance: {
+        estimatedLoadTime: 0,
+        hasOptimizedAssets: false,
+        hasMinifiedCode: false,
+        hasProgressiveLoading: false,
+        recommendations: []
+      },
+      accessibility: {
+        hasLanguageSupport: false,
+        hasMobileSupport: false,
+        hasKeyboardSupport: false,
+        hasProperContrast: false,
+        issues: []
       }
     };
   }
@@ -497,17 +643,56 @@ class GameValidationService extends EventEmitter {
     
     if (htmlFiles.length === 0) {
       return {
-        ruleId: 'html_structure',
-        passed: false,
-        message: 'HTML файлы не найдены',
-        suggestion: 'Добавьте основной HTML файл для игры',
-        autoFix: {
-          available: true,
-          description: 'Создать базовый HTML файл',
-          action: async () => {
-            // Здесь была бы логика создания HTML файла
-            return true;
+        isValid: false,
+        errors: [
+          {
+            type: 'critical',
+            category: 'structure',
+            message: 'HTML файлы не найдены',
+            solution: 'Добавьте основной HTML файл для игры'
           }
+        ],
+        warnings: [],
+        size: 0,
+        structure: {
+          hasIndexHtml: false,
+          hasRequiredAssets: false,
+          properFileNames: false,
+          supportedFileTypes: false,
+          fileCount: 0,
+          directory: []
+        },
+        sdk: {
+          hasSDKScript: false,
+          hasProperInit: false,
+          hasAdIntegration: false,
+          hasLeaderboardIntegration: false,
+          hasAchievementIntegration: false,
+          hasLanguageDetection: false,
+          hasLifecycleHandling: false,
+          errors: [],
+          recommendations: []
+        },
+        csp: {
+          isValid: false,
+          hasCSPHeader: false,
+          allowsRequiredSources: false,
+          blocksUnsafeSources: false,
+          issues: []
+        },
+        performance: {
+          estimatedLoadTime: 0,
+          hasOptimizedAssets: false,
+          hasMinifiedCode: false,
+          hasProgressiveLoading: false,
+          recommendations: []
+        },
+        accessibility: {
+          hasLanguageSupport: false,
+          hasMobileSupport: false,
+          hasKeyboardSupport: false,
+          hasProperContrast: false,
+          issues: []
         }
       };
     }
@@ -520,14 +705,56 @@ class GameValidationService extends EventEmitter {
     const hasValidStructure = true;
 
     return {
-      ruleId: 'html_structure',
-      passed: hasValidStructure,
-      message: hasValidStructure 
-        ? 'HTML структура корректна'
-        : 'HTML структура требует исправлений',
-      details: `Основной файл: ${mainHTML.name}`,
-      evidence: {
-        files: htmlFiles.map(f => f.name)
+      isValid: hasValidStructure,
+      errors: hasValidStructure ? [] : [
+        {
+          type: 'critical',
+          category: 'structure',
+          message: 'HTML структура требует исправлений',
+          solution: 'Создайте правильный HTML файл'
+        }
+      ],
+      warnings: [],
+      size: 0,
+      structure: {
+        hasIndexHtml: hasValidStructure,
+        hasRequiredAssets: false,
+        properFileNames: false,
+        supportedFileTypes: false,
+        fileCount: 0,
+        directory: []
+      },
+      sdk: {
+        hasSDKScript: false,
+        hasProperInit: false,
+        hasAdIntegration: false,
+        hasLeaderboardIntegration: false,
+        hasAchievementIntegration: false,
+        hasLanguageDetection: false,
+        hasLifecycleHandling: false,
+        errors: [],
+        recommendations: []
+      },
+      csp: {
+        isValid: false,
+        hasCSPHeader: false,
+        allowsRequiredSources: false,
+        blocksUnsafeSources: false,
+        issues: []
+      },
+      performance: {
+        estimatedLoadTime: 0,
+        hasOptimizedAssets: false,
+        hasMinifiedCode: false,
+        hasProgressiveLoading: false,
+        recommendations: []
+      },
+      accessibility: {
+        hasLanguageSupport: false,
+        hasMobileSupport: false,
+        hasKeyboardSupport: false,
+        hasProperContrast: false,
+        issues: []
       }
     };
   }
@@ -537,26 +764,59 @@ class GameValidationService extends EventEmitter {
     const hasResponsiveSettings = game.settings.width && game.settings.height;
     const supportsOrientation = game.metadata.orientation !== undefined;
 
-    const passed = hasResponsiveSettings && supportsOrientation;
+    const isValid = hasResponsiveSettings && supportsOrientation;
 
     return {
-      ruleId: 'responsive_design',
-      passed,
-      message: passed 
-        ? 'Игра поддерживает адаптивный дизайн'
-        : 'Игра не поддерживает адаптивный дизайн',
-      suggestion: passed ? undefined : 'Добавьте поддержку разных размеров экрана и ориентаций',
-      autoFix: {
-        available: true,
-        description: 'Добавить базовые CSS медиа-запросы',
-        action: async () => true
-      },
-      evidence: {
-        metrics: {
-          width: game.settings.width,
-          height: game.settings.height,
-          orientation: game.metadata.orientation
+      isValid,
+      errors: isValid ? [] : [
+        {
+          type: 'warning',
+          category: 'technical',
+          message: 'Игра не поддерживает адаптивный дизайн',
+          solution: 'Добавьте поддержку разных размеров экрана и ориентаций'
         }
+      ],
+      warnings: [],
+      size: 0,
+      structure: {
+        hasIndexHtml: false,
+        hasRequiredAssets: false,
+        properFileNames: false,
+        supportedFileTypes: false,
+        fileCount: 0,
+        directory: []
+      },
+      sdk: {
+        hasSDKScript: false,
+        hasProperInit: false,
+        hasAdIntegration: false,
+        hasLeaderboardIntegration: false,
+        hasAchievementIntegration: false,
+        hasLanguageDetection: false,
+        hasLifecycleHandling: false,
+        errors: [],
+        recommendations: []
+      },
+      csp: {
+        isValid: false,
+        hasCSPHeader: false,
+        allowsRequiredSources: false,
+        blocksUnsafeSources: false,
+        issues: []
+      },
+      performance: {
+        estimatedLoadTime: 0,
+        hasOptimizedAssets: false,
+        hasMinifiedCode: false,
+        hasProgressiveLoading: false,
+        recommendations: []
+      },
+      accessibility: {
+        hasLanguageSupport: false,
+        hasMobileSupport: false,
+        hasKeyboardSupport: false,
+        hasProperContrast: false,
+        issues: []
       }
     };
   }
@@ -568,7 +828,7 @@ class GameValidationService extends EventEmitter {
     const hasRequiredFeatures = integration.features.length > 0;
     const hasValidVersion = integration.apiVersion && integration.apiVersion >= '2.0';
 
-    const passed = hasSDK && hasRequiredFeatures && hasValidVersion;
+    const isValid = hasSDK && hasRequiredFeatures && hasValidVersion;
 
     const issues: string[] = [];
     if (!hasSDK) issues.push('SDK не подключен');
@@ -576,19 +836,56 @@ class GameValidationService extends EventEmitter {
     if (!hasValidVersion) issues.push('Устаревшая версия API');
 
     return {
-      ruleId: 'yandex_sdk_integration',
-      passed,
-      message: passed 
-        ? 'Yandex Games SDK корректно интегрирован'
-        : `Проблемы с интеграцией SDK: ${issues.join(', ')}`,
-      details: `Версия API: ${integration.apiVersion}, Функции: ${integration.features.join(', ')}`,
-      suggestion: passed ? undefined : 'Обновите интеграцию с Yandex Games SDK до версии 2.0+',
-      evidence: {
-        metrics: {
-          hasSDK: hasSDK,
-          featuresCount: integration.features.length,
-          apiVersion: integration.apiVersion
+      isValid,
+      errors: isValid ? [] : [
+        {
+          type: 'blocking',
+          category: 'sdk',
+          message: `Проблемы с интеграцией SDK: ${issues.join(', ')}`,
+          solution: 'Обновите интеграцию с Yandex Games SDK до версии 2.0+'
         }
+      ],
+      warnings: [],
+      size: 0,
+      structure: {
+        hasIndexHtml: false,
+        hasRequiredAssets: false,
+        properFileNames: false,
+        supportedFileTypes: false,
+        fileCount: 0,
+        directory: []
+      },
+      sdk: {
+        hasSDKScript: false,
+        hasProperInit: false,
+        hasAdIntegration: false,
+        hasLeaderboardIntegration: false,
+        hasAchievementIntegration: false,
+        hasLanguageDetection: false,
+        hasLifecycleHandling: false,
+        errors: issues,
+        recommendations: []
+      },
+      csp: {
+        isValid: false,
+        hasCSPHeader: false,
+        allowsRequiredSources: false,
+        blocksUnsafeSources: false,
+        issues: []
+      },
+      performance: {
+        estimatedLoadTime: 0,
+        hasOptimizedAssets: false,
+        hasMinifiedCode: false,
+        hasProgressiveLoading: false,
+        recommendations: []
+      },
+      accessibility: {
+        hasLanguageSupport: false,
+        hasMobileSupport: false,
+        hasKeyboardSupport: false,
+        hasProperContrast: false,
+        issues: []
       }
     };
   }
@@ -598,26 +895,59 @@ class GameValidationService extends EventEmitter {
     const maxLoadTime = game.performance.maxLoadTime;
     const targetLoadTime = 10000; // 10 секунд
 
-    const passed = maxLoadTime <= targetLoadTime;
+    const isValid = maxLoadTime <= targetLoadTime;
 
     return {
-      ruleId: 'load_time_optimization',
-      passed,
-      message: passed 
-        ? `Время загрузки (${(maxLoadTime / 1000).toFixed(1)}s) оптимально`
-        : `Время загрузки (${(maxLoadTime / 1000).toFixed(1)}s) превышает рекомендуемое`,
-      suggestion: passed ? undefined : 'Оптимизируйте ресурсы, используйте сжатие и ленивую загрузку',
-      autoFix: {
-        available: true,
-        description: 'Применить автоматическую оптимизацию ресурсов',
-        action: async () => true
-      },
-      evidence: {
-        metrics: {
-          actualLoadTime: maxLoadTime,
-          targetLoadTime,
-          exceedsTarget: maxLoadTime > targetLoadTime
+      isValid,
+      errors: isValid ? [] : [
+        {
+          type: 'warning',
+          category: 'performance',
+          message: `Время загрузки (${(maxLoadTime / 1000).toFixed(1)}s) превышает рекомендуемое`,
+          solution: 'Оптимизируйте ресурсы, используйте сжатие и ленивую загрузку'
         }
+      ],
+      warnings: [],
+      size: 0,
+      structure: {
+        hasIndexHtml: false,
+        hasRequiredAssets: false,
+        properFileNames: false,
+        supportedFileTypes: false,
+        fileCount: 0,
+        directory: []
+      },
+      sdk: {
+        hasSDKScript: false,
+        hasProperInit: false,
+        hasAdIntegration: false,
+        hasLeaderboardIntegration: false,
+        hasAchievementIntegration: false,
+        hasLanguageDetection: false,
+        hasLifecycleHandling: false,
+        errors: [],
+        recommendations: []
+      },
+      csp: {
+        isValid: false,
+        hasCSPHeader: false,
+        allowsRequiredSources: false,
+        blocksUnsafeSources: false,
+        issues: []
+      },
+      performance: {
+        estimatedLoadTime: maxLoadTime,
+        hasOptimizedAssets: false,
+        hasMinifiedCode: false,
+        hasProgressiveLoading: false,
+        recommendations: []
+      },
+      accessibility: {
+        hasLanguageSupport: false,
+        hasMobileSupport: false,
+        hasKeyboardSupport: false,
+        hasProperContrast: false,
+        issues: []
       }
     };
   }
@@ -628,21 +958,59 @@ class GameValidationService extends EventEmitter {
     const limitMB = 512;
     const limitBytes = limitMB * 1024 * 1024;
 
-    const passed = maxMemory <= limitBytes;
+    const isValid = maxMemory <= limitBytes;
 
     return {
-      ruleId: 'memory_usage',
-      passed,
-      message: passed 
-        ? `Использование памяти (${(maxMemory / 1024 / 1024).toFixed(1)}MB) в норме`
-        : `Использование памяти (${(maxMemory / 1024 / 1024).toFixed(1)}MB) превышает лимит`,
-      suggestion: passed ? undefined : 'Оптимизируйте использование памяти, освобождайте неиспользуемые ресурсы',
-      evidence: {
-        metrics: {
-          actualMemoryMB: maxMemory / 1024 / 1024,
-          limitMB,
-          exceedsLimit: maxMemory > limitBytes
+      isValid,
+      errors: isValid ? [] : [
+        {
+          type: 'error',
+          category: 'performance',
+          message: `Использование памяти (${(maxMemory / 1024 / 1024).toFixed(1)}MB) превышает лимит`,
+          solution: 'Оптимизируйте использование памяти, освобождайте неиспользуемые ресурсы'
         }
+      ],
+      warnings: [],
+      size: 0,
+      structure: {
+        hasIndexHtml: false,
+        hasRequiredAssets: false,
+        properFileNames: false,
+        supportedFileTypes: false,
+        fileCount: 0,
+        directory: []
+      },
+      sdk: {
+        hasSDKScript: false,
+        hasProperInit: false,
+        hasAdIntegration: false,
+        hasLeaderboardIntegration: false,
+        hasAchievementIntegration: false,
+        hasLanguageDetection: false,
+        hasLifecycleHandling: false,
+        errors: [],
+        recommendations: []
+      },
+      csp: {
+        isValid: false,
+        hasCSPHeader: false,
+        allowsRequiredSources: false,
+        blocksUnsafeSources: false,
+        issues: []
+      },
+      performance: {
+        estimatedLoadTime: 0,
+        hasOptimizedAssets: false,
+        hasMinifiedCode: false,
+        hasProgressiveLoading: false,
+        recommendations: []
+      },
+      accessibility: {
+        hasLanguageSupport: false,
+        hasMobileSupport: false,
+        hasKeyboardSupport: false,
+        hasProperContrast: false,
+        issues: []
       }
     };
   }
@@ -661,22 +1029,59 @@ class GameValidationService extends EventEmitter {
       )
     );
 
-    const passed = hasAdequateRating && !hasInappropriateTags;
+    const isValid = hasAdequateRating && !hasInappropriateTags;
 
     return {
-      ruleId: 'content_safety',
-      passed,
-      message: passed 
-        ? 'Контент соответствует политикам безопасности'
-        : 'Контент может нарушать политики безопасности',
-      details: `Рейтинг: ${rating}, Теги: ${game.metadata.tags.join(', ')}`,
-      suggestion: passed ? undefined : 'Проверьте соответствие контента политикам Яндекса',
-      evidence: {
-        metrics: {
-          rating,
-          hasInappropriateTags,
-          tagsCount: game.metadata.tags.length
+      isValid,
+      errors: isValid ? [] : [
+        {
+          type: 'error',
+          category: 'content',
+          message: 'Контент может нарушать политики безопасности',
+          solution: 'Проверьте соответствие контента политикам Яндекса'
         }
+      ],
+      warnings: [],
+      size: 0,
+      structure: {
+        hasIndexHtml: false,
+        hasRequiredAssets: false,
+        properFileNames: false,
+        supportedFileTypes: false,
+        fileCount: 0,
+        directory: []
+      },
+      sdk: {
+        hasSDKScript: false,
+        hasProperInit: false,
+        hasAdIntegration: false,
+        hasLeaderboardIntegration: false,
+        hasAchievementIntegration: false,
+        hasLanguageDetection: false,
+        hasLifecycleHandling: false,
+        errors: [],
+        recommendations: []
+      },
+      csp: {
+        isValid: false,
+        hasCSPHeader: false,
+        allowsRequiredSources: false,
+        blocksUnsafeSources: false,
+        issues: []
+      },
+      performance: {
+        estimatedLoadTime: 0,
+        hasOptimizedAssets: false,
+        hasMinifiedCode: false,
+        hasProgressiveLoading: false,
+        recommendations: []
+      },
+      accessibility: {
+        hasLanguageSupport: false,
+        hasMobileSupport: false,
+        hasKeyboardSupport: false,
+        hasProperContrast: false,
+        issues: []
       }
     };
   }
@@ -686,64 +1091,278 @@ class GameValidationService extends EventEmitter {
     const language = game.metadata.language;
     const supportsRussian = language === 'ru' || language === 'ru-RU';
 
+    const isValid = supportsRussian;
+
     return {
-      ruleId: 'localization_support',
-      passed: supportsRussian,
-      message: supportsRussian 
-        ? 'Игра поддерживает русский язык'
-        : 'Игра не поддерживает русский язык',
-      suggestion: supportsRussian ? undefined : 'Добавьте поддержку русского языка для российской аудитории',
-      autoFix: {
-        available: true,
-        description: 'Добавить базовую поддержку русского языка',
-        action: async () => true
+      isValid,
+      errors: isValid ? [] : [
+        {
+          type: 'warning',
+          category: 'content',
+          message: 'Игра не поддерживает русский язык',
+          solution: 'Добавьте поддержку русского языка для российской аудитории'
+        }
+      ],
+      warnings: [],
+      size: 0,
+      structure: {
+        hasIndexHtml: false,
+        hasRequiredAssets: false,
+        properFileNames: false,
+        supportedFileTypes: false,
+        fileCount: 0,
+        directory: []
       },
-      evidence: {
-        metrics: { currentLanguage: language }
+      sdk: {
+        hasSDKScript: false,
+        hasProperInit: false,
+        hasAdIntegration: false,
+        hasLeaderboardIntegration: false,
+        hasAchievementIntegration: false,
+        hasLanguageDetection: false,
+        hasLifecycleHandling: false,
+        errors: [],
+        recommendations: []
+      },
+      csp: {
+        isValid: false,
+        hasCSPHeader: false,
+        allowsRequiredSources: false,
+        blocksUnsafeSources: false,
+        issues: []
+      },
+      performance: {
+        estimatedLoadTime: 0,
+        hasOptimizedAssets: false,
+        hasMinifiedCode: false,
+        hasProgressiveLoading: false,
+        recommendations: []
+      },
+      accessibility: {
+        hasLanguageSupport: isValid,
+        hasMobileSupport: false,
+        hasKeyboardSupport: false,
+        hasProperContrast: false,
+        issues: []
       }
     };
   }
 
   // Проверка функций доступности
   private async checkAccessibilityFeatures(game: GameData): Promise<ValidationResult> {
-    // Простая проверка - предполагаем наличие базовых функций доступности
-    const hasAccessibilityFeatures = Math.random() > 0.5; // Заглушка
+    // Реальная проверка функций доступности
+    let isValid = false;
+    let accessibilityScore = 0;
+    const issues: ValidationError[] = [];
+
+    // Проверяем HTML файлы на наличие атрибутов доступности
+    const htmlFiles = game.files.filter(f => f.type === 'html');
+    
+    for (const file of htmlFiles) {
+      if (file.content) {
+        const content = file.content.toLowerCase();
+        
+        // Проверяем alt атрибуты для изображений
+        if (content.includes('alt=')) {
+          accessibilityScore += 20;
+        }
+        
+        // Проверяем ARIA атрибуты
+        if (content.includes('aria-') || content.includes('role=')) {
+          accessibilityScore += 25;
+        }
+        
+        // Проверяем tabindex для клавиатурной навигации
+        if (content.includes('tabindex')) {
+          accessibilityScore += 15;
+        }
+        
+        // Проверяем заголовки (h1, h2, etc.)
+        if (/h[1-6]/.test(content)) {
+          accessibilityScore += 10;
+        }
+        
+        // Проверяем labels для форм
+        if (content.includes('<label') && content.includes('for=')) {
+          accessibilityScore += 15;
+        }
+        
+        // Проверяем skip links
+        if (content.includes('skip') && content.includes('content')) {
+          accessibilityScore += 15;
+        }
+      }
+    }
+
+    isValid = accessibilityScore >= 50; // Минимум 50 очков
 
     return {
-      ruleId: 'accessibility_features',
-      passed: hasAccessibilityFeatures,
-      message: hasAccessibilityFeatures 
-        ? 'Игра поддерживает функции доступности'
-        : 'Игра не поддерживает функции доступности',
-      suggestion: hasAccessibilityFeatures ? undefined : 'Добавьте поддержку клавиатурной навигации и альтернативного текста',
-      autoFix: {
-        available: true,
-        description: 'Добавить базовые атрибуты доступности',
-        action: async () => true
+      isValid,
+      errors: isValid ? [] : [
+        {
+          type: 'warning',
+          category: 'accessibility',
+          message: `Игра недостаточно поддерживает доступность (${accessibilityScore}/100)`,
+          solution: 'Добавьте alt атрибуты, ARIA разметку и поддержку клавиатурной навигации'
+        }
+      ],
+      warnings: [],
+      size: 0,
+      structure: {
+        hasIndexHtml: false,
+        hasRequiredAssets: false,
+        properFileNames: false,
+        supportedFileTypes: false,
+        fileCount: 0,
+        directory: []
+      },
+      sdk: {
+        hasSDKScript: false,
+        hasProperInit: false,
+        hasAdIntegration: false,
+        hasLeaderboardIntegration: false,
+        hasAchievementIntegration: false,
+        hasLanguageDetection: false,
+        hasLifecycleHandling: false,
+        errors: [],
+        recommendations: []
+      },
+      csp: {
+        isValid: false,
+        hasCSPHeader: false,
+        allowsRequiredSources: false,
+        blocksUnsafeSources: false,
+        issues: []
+      },
+      performance: {
+        estimatedLoadTime: 0,
+        hasOptimizedAssets: false,
+        hasMinifiedCode: false,
+        hasProgressiveLoading: false,
+        recommendations: []
+      },
+      accessibility: {
+        hasLanguageSupport: isValid,
+        hasMobileSupport: false,
+        hasKeyboardSupport: false,
+        hasProperContrast: false,
+        issues: []
       }
     };
   }
 
   // Проверка обработки ошибок
   private async checkErrorHandling(game: GameData): Promise<ValidationResult> {
-    // Проверяем наличие JS файлов и предполагаем наличие обработки ошибок
+    // Реальная проверка обработки ошибок в JS файлах
     const jsFiles = game.files.filter(f => f.type === 'js');
-    const hasErrorHandling = jsFiles.length > 0; // Заглушка
+    let isValid = true;
+    const issues: ValidationError[] = [];
+
+    for (const file of jsFiles) {
+      if (file.content) {
+        const content = file.content;
+        
+        // Проверяем try-catch блоки
+        if (!content.includes('try') || !content.includes('catch')) {
+          isValid = false;
+          issues.push({
+            type: 'warning',
+            category: 'technical',
+            message: 'Отсутствуют try-catch блоки',
+            solution: 'Добавьте обработку ошибок'
+          });
+        }
+        
+        // Проверяем обработчики ошибок window.onerror
+        if (!content.includes('window.onerror') && !content.includes('addEventListener(\'error\'')) {
+          isValid = false;
+          issues.push({
+            type: 'warning',
+            category: 'technical',
+            message: 'Отсутствуют обработчики ошибок window.onerror',
+            solution: 'Добавьте обработку ошибок'
+          });
+        }
+        
+        // Проверяем обработку Promise rejection
+        if (!content.includes('unhandledrejection') && !content.includes('.catch(')) {
+          isValid = false;
+          issues.push({
+            type: 'warning',
+            category: 'technical',
+            message: 'Отсутствует обработка Promise rejection',
+            solution: 'Добавьте обработку ошибок'
+          });
+        }
+        
+        // Проверяем console.error для логирования
+        if (!content.includes('console.error') && !content.includes('logger.error')) {
+          isValid = false;
+          issues.push({
+            type: 'warning',
+            category: 'technical',
+            message: 'Отсутствует console.error для логирования',
+            solution: 'Добавьте логирование ошибок'
+          });
+        }
+        
+        // Проверяем валидацию входных данных
+        if (!content.includes('typeof') && !content.includes('instanceof') && !content.includes('isNaN')) {
+          isValid = false;
+          issues.push({
+            type: 'warning',
+            category: 'technical',
+            message: 'Отсутствует валидация входных данных',
+            solution: 'Добавьте валидацию данных'
+          });
+        }
+      }
+    }
 
     return {
-      ruleId: 'error_handling',
-      passed: hasErrorHandling,
-      message: hasErrorHandling 
-        ? 'Игра корректно обрабатывает ошибки'
-        : 'Обработка ошибок отсутствует или неполная',
-      suggestion: hasErrorHandling ? undefined : 'Добавьте try-catch блоки и глобальные обработчики ошибок',
-      autoFix: {
-        available: true,
-        description: 'Добавить базовые обработчики ошибок',
-        action: async () => true
+      isValid,
+      errors: isValid ? [] : issues,
+      warnings: [],
+      size: 0,
+      structure: {
+        hasIndexHtml: false,
+        hasRequiredAssets: false,
+        properFileNames: false,
+        supportedFileTypes: false,
+        fileCount: 0,
+        directory: []
       },
-      evidence: {
-        files: jsFiles.map(f => f.name)
+      sdk: {
+        hasSDKScript: false,
+        hasProperInit: false,
+        hasAdIntegration: false,
+        hasLeaderboardIntegration: false,
+        hasAchievementIntegration: false,
+        hasLanguageDetection: false,
+        hasLifecycleHandling: false,
+        errors: [],
+        recommendations: []
+      },
+      csp: {
+        isValid: false,
+        hasCSPHeader: false,
+        allowsRequiredSources: false,
+        blocksUnsafeSources: false,
+        issues: []
+      },
+      performance: {
+        estimatedLoadTime: 0,
+        hasOptimizedAssets: false,
+        hasMinifiedCode: false,
+        hasProgressiveLoading: false,
+        recommendations: []
+      },
+      accessibility: {
+        hasLanguageSupport: false,
+        hasMobileSupport: false,
+        hasKeyboardSupport: false,
+        hasProperContrast: false,
+        issues: []
       }
     };
   }
@@ -758,48 +1377,189 @@ class GameValidationService extends EventEmitter {
     const totalFiles = game.files.length;
     const compressionRate = totalFiles > 0 ? (compressedFiles / totalFiles) * 100 : 0;
 
-    const passed = compressionRate >= 80; // 80% файлов должны быть сжаты
+    const isValid = compressionRate >= 80; // 80% файлов должны быть сжаты
 
     return {
-      ruleId: 'asset_optimization',
-      passed,
-      message: passed 
-        ? `Ресурсы оптимизированы (${compressionRate.toFixed(1)}% сжато)`
-        : `Ресурсы недостаточно оптимизированы (${compressionRate.toFixed(1)}% сжато)`,
-      suggestion: passed ? undefined : 'Сожмите изображения и звуковые файлы для уменьшения размера',
-      autoFix: {
-        available: true,
-        description: 'Автоматически сжать изображения и аудио',
-        action: async () => true
-      },
-      evidence: {
-        metrics: {
-          imageFilesCount: imageFiles.length,
-          audioFilesCount: audioFiles.length,
-          compressionRate,
-          compressedFiles,
-          totalFiles
+      isValid,
+      errors: isValid ? [] : [
+        {
+          type: 'warning',
+          category: 'performance',
+          message: `Ресурсы недостаточно оптимизированы (${compressionRate.toFixed(1)}% сжато)`,
+          solution: 'Сожмите изображения и звуковые файлы для уменьшения размера'
         }
+      ],
+      warnings: [],
+      size: 0,
+      structure: {
+        hasIndexHtml: false,
+        hasRequiredAssets: false,
+        properFileNames: false,
+        supportedFileTypes: false,
+        fileCount: 0,
+        directory: []
+      },
+      sdk: {
+        hasSDKScript: false,
+        hasProperInit: false,
+        hasAdIntegration: false,
+        hasLeaderboardIntegration: false,
+        hasAchievementIntegration: false,
+        hasLanguageDetection: false,
+        hasLifecycleHandling: false,
+        errors: [],
+        recommendations: []
+      },
+      csp: {
+        isValid: false,
+        hasCSPHeader: false,
+        allowsRequiredSources: false,
+        blocksUnsafeSources: false,
+        issues: []
+      },
+      performance: {
+        estimatedLoadTime: 0,
+        hasOptimizedAssets: isValid,
+        hasMinifiedCode: false,
+        hasProgressiveLoading: false,
+        recommendations: []
+      },
+      accessibility: {
+        hasLanguageSupport: false,
+        hasMobileSupport: false,
+        hasKeyboardSupport: false,
+        hasProperContrast: false,
+        issues: []
       }
     };
   }
 
   // Проверка заголовков безопасности
   private async checkSecurityHeaders(game: GameData): Promise<ValidationResult> {
-    // Простая проверка - предполагаем наличие базовых заголовков
-    const hasSecurityHeaders = Math.random() > 0.3; // Заглушка
+    // Реальная проверка заголовков безопасности в HTML
+    const htmlFiles = game.files.filter(f => f.type === 'html');
+    let isValid = true;
+    const issues: ValidationError[] = [];
+
+    for (const file of htmlFiles) {
+      if (file.content) {
+        const content = file.content;
+        
+        // Проверяем meta viewport для предотвращения clickjacking
+        if (!content.includes('viewport')) {
+          isValid = false;
+          issues.push({
+            type: 'warning',
+            category: 'technical',
+            message: 'Отсутствует viewport meta тег',
+            solution: 'Добавьте viewport meta тег'
+          });
+        }
+        
+        // Проверяем CSP заголовки
+        if (!content.includes('Content-Security-Policy') && !content.includes('csp')) {
+          isValid = false;
+          issues.push({
+            type: 'warning',
+            category: 'technical',
+            message: 'Отсутствует Content Security Policy заголовок',
+            solution: 'Добавьте CSP заголовки'
+          });
+        }
+        
+        // Проверяем X-Frame-Options
+        if (!content.includes('X-Frame-Options') && !content.includes('frame-options')) {
+          isValid = false;
+          issues.push({
+            type: 'warning',
+            category: 'technical',
+            message: 'Отсутствует X-Frame-Options заголовок',
+            solution: 'Добавьте X-Frame-Options заголовок'
+          });
+        }
+        
+        // Проверяем отсутствие inline скриптов (потенциально небезопасно)
+        if (content.includes('<script>') && !content.includes('src=')) {
+          isValid = false;
+          issues.push({
+            type: 'warning',
+            category: 'technical',
+            message: 'Отсутствуют src атрибуты для скриптов',
+            solution: 'Добавьте src атрибуты для скриптов'
+          });
+        }
+        
+        // Проверяем HTTPS ссылки
+        const httpCount = (content.match(/http:\/\//g) || []).length;
+        const httpsCount = (content.match(/https:\/\//g) || []).length;
+        
+        if (httpsCount <= httpCount) {
+          isValid = false;
+          issues.push({
+            type: 'warning',
+            category: 'technical',
+            message: 'Отсутствует использование HTTPS',
+            solution: 'Добавьте HTTPS'
+          });
+        }
+        
+        // Проверяем noopener/noreferrer для внешних ссылок
+        if (!content.includes('noopener') && !content.includes('noreferrer')) {
+          isValid = false;
+          issues.push({
+            type: 'warning',
+            category: 'technical',
+            message: 'Отсутствует noopener/noreferrer для внешних ссылок',
+            solution: 'Добавьте noopener/noreferrer для внешних ссылок'
+          });
+        }
+      }
+    }
 
     return {
-      ruleId: 'security_headers',
-      passed: hasSecurityHeaders,
-      message: hasSecurityHeaders 
-        ? 'HTML содержит необходимые заголовки безопасности'
-        : 'Отсутствуют заголовки безопасности',
-      suggestion: hasSecurityHeaders ? undefined : 'Добавьте CSP, X-Frame-Options и другие заголовки безопасности',
-      autoFix: {
-        available: true,
-        description: 'Добавить базовые заголовки безопасности в HTML',
-        action: async () => true
+      isValid,
+      errors: isValid ? [] : issues,
+      warnings: [],
+      size: 0,
+      structure: {
+        hasIndexHtml: false,
+        hasRequiredAssets: false,
+        properFileNames: false,
+        supportedFileTypes: false,
+        fileCount: 0,
+        directory: []
+      },
+      sdk: {
+        hasSDKScript: false,
+        hasProperInit: false,
+        hasAdIntegration: false,
+        hasLeaderboardIntegration: false,
+        hasAchievementIntegration: false,
+        hasLanguageDetection: false,
+        hasLifecycleHandling: false,
+        errors: [],
+        recommendations: []
+      },
+      csp: {
+        isValid: isValid,
+        hasCSPHeader: isValid,
+        allowsRequiredSources: isValid,
+        blocksUnsafeSources: isValid,
+        issues: []
+      },
+      performance: {
+        estimatedLoadTime: 0,
+        hasOptimizedAssets: isValid,
+        hasMinifiedCode: false,
+        hasProgressiveLoading: false,
+        recommendations: []
+      },
+      accessibility: {
+        hasLanguageSupport: false,
+        hasMobileSupport: false,
+        hasKeyboardSupport: false,
+        hasProperContrast: false,
+        issues: []
       }
     };
   }
@@ -872,18 +1632,18 @@ class GameValidationService extends EventEmitter {
     const skipped: string[] = [];
 
     for (const result of targetResults) {
-      if (result.passed) {
+      if (result.isValid) {
         skipped.push(result.ruleId);
         continue;
       }
 
-      if (!result.autoFix?.available) {
+      if (!result.errors.length) {
         skipped.push(result.ruleId);
         continue;
       }
 
       try {
-        const success = await result.autoFix.action();
+        const success = await this.fixIssues(result);
         if (success) {
           fixed.push(result.ruleId);
         } else {
@@ -907,8 +1667,8 @@ class GameValidationService extends EventEmitter {
     unchanged: string[];
     scoreChange: number;
   } {
-    const result1Map = new Map(report1.results.map(r => [r.ruleId, r.passed]));
-    const result2Map = new Map(report2.results.map(r => [r.ruleId, r.passed]));
+    const result1Map = new Map(report1.results.map(r => [r.ruleId, r.isValid]));
+    const result2Map = new Map(report2.results.map(r => [r.ruleId, r.isValid]));
 
     const improved: string[] = [];
     const degraded: string[] = [];
@@ -959,7 +1719,7 @@ class GameValidationService extends EventEmitter {
     // Подсчитываем самые частые проблемы
     const issueCount = new Map<string, number>();
     allReports.forEach(report => {
-      report.results.filter(r => !r.passed).forEach(result => {
+      report.results.filter(r => !r.isValid).forEach(result => {
         issueCount.set(result.ruleId, (issueCount.get(result.ruleId) || 0) + 1);
       });
     });
@@ -980,6 +1740,11 @@ class GameValidationService extends EventEmitter {
       failedGames,
       mostCommonIssues
     };
+  }
+
+  private async fixIssues(result: ValidationResult): Promise<boolean> {
+    // Реализация метода autoFixIssues
+    return false; // Заглушка, так как метод не реализован
   }
 }
 

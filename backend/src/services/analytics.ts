@@ -358,6 +358,13 @@ class AnalyticsService extends EventEmitter {
     if (this.isConversionEvent(event)) {
       session.conversionEvents.push(event.eventName);
     }
+
+    // Отмечаем сессию как неактивную если прошло больше 30 минут
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+    if (session.lastActivity < thirtyMinutesAgo) {
+      session.isActive = false;
+      session.endTime = session.lastActivity;
+    }
   }
 
   // Проверка конверсионного события
@@ -778,10 +785,66 @@ class AnalyticsService extends EventEmitter {
 
   // Остальные методы метрик и графиков (заглушки)
   private getGamePerformanceMetrics(timeframe: AnalyticsReport['timeframe']): AnalyticsReport['metrics'] {
+    const relevantSessions = Array.from(this.sessions.values())
+      .filter(s => s.startTime >= timeframe.start && s.startTime <= timeframe.end);
+    
+    const gameEvents = Array.from(this.events.values())
+      .filter(e => e.timestamp >= timeframe.start && e.timestamp <= timeframe.end)
+      .filter(e => e.name.includes('game'));
+    
+    const gamesCreated = gameEvents.filter(e => e.name === 'game_created').length;
+    const gamesCompleted = gameEvents.filter(e => e.name === 'game_completed').length;
+    
+    // Рассчитываем изменения по сравнению с предыдущим периодом
+    const periodDuration = timeframe.end.getTime() - timeframe.start.getTime();
+    const prevStart = new Date(timeframe.start.getTime() - periodDuration);
+    const prevEnd = timeframe.start;
+    
+    const prevGamesCreated = Array.from(this.events.values())
+      .filter(e => e.timestamp >= prevStart && e.timestamp <= prevEnd)
+      .filter(e => e.name === 'game_created').length;
+    
+    const gamesCreatedChange = prevGamesCreated > 0 ? 
+      ((gamesCreated - prevGamesCreated) / prevGamesCreated) * 100 : 0;
+    
+    const completionRate = gamesCreated > 0 ? (gamesCompleted / gamesCreated) * 100 : 0;
+    const prevCompletionRate = prevGamesCreated > 0 ? 
+      (Array.from(this.events.values())
+        .filter(e => e.timestamp >= prevStart && e.timestamp <= prevEnd)
+        .filter(e => e.name === 'game_completed').length / prevGamesCreated) * 100 : 0;
+    
+    const completionChange = prevCompletionRate > 0 ? 
+      completionRate - prevCompletionRate : 0;
+    
+    // Определяем самый популярный тип игры
+    const gameTypes = gameEvents
+      .filter(e => e.name === 'game_created' && e.properties?.genre)
+      .reduce((acc, e) => {
+        const genre = e.properties?.genre;
+        acc[genre] = (acc[genre] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+    
+    const popularGenre = Object.entries(gameTypes)
+      .sort(([,a], [,b]) => b - a)[0];
+    
     return {
-      total_games_created: { value: 150, change: 15, trend: 'up' },
-      avg_game_completion: { value: 67, change: -3, trend: 'down' },
-      popular_game_type: { value: 0, change: 0, trend: 'stable' }
+      total_games_created: { 
+        value: gamesCreated, 
+        change: Math.round(gamesCreatedChange), 
+        trend: gamesCreatedChange > 0 ? 'up' : gamesCreatedChange < 0 ? 'down' : 'stable' 
+      },
+      avg_game_completion: { 
+        value: Math.round(completionRate), 
+        change: Math.round(completionChange), 
+        trend: completionChange > 0 ? 'up' : completionChange < 0 ? 'down' : 'stable' 
+      },
+      popular_game_type: { 
+        value: popularGenre ? popularGenre[1] : 0, 
+        change: 0, 
+        trend: 'stable',
+        label: popularGenre ? popularGenre[0] : 'Неизвестно'
+      }
     };
   }
 
@@ -800,10 +863,70 @@ class AnalyticsService extends EventEmitter {
   }
 
   private getMonetizationMetrics(timeframe: AnalyticsReport['timeframe']): AnalyticsReport['metrics'] {
+    // Получаем данные о покупках из монетизации
+    const monetization = require('./monetization').monetizationService;
+    const analytics = monetization.getAnalytics();
+    
+    // Фильтруем покупки по временному промежутку
+    const allPurchases = monetization.getUserPurchases ? 
+      Array.from(monetization.purchases?.values() || [])
+        .filter((p: any) => {
+          const purchaseDate = new Date(p.createdAt);
+          return purchaseDate >= timeframe.start && purchaseDate <= timeframe.end && p.status === 'completed';
+        }) : [];
+    
+    const totalRevenue = allPurchases.reduce((sum: number, p: any) => sum + p.amount, 0);
+    const totalPurchases = allPurchases.length;
+    
+    // Рассчитываем изменения по сравнению с предыдущим периодом
+    const periodDuration = timeframe.end.getTime() - timeframe.start.getTime();
+    const prevStart = new Date(timeframe.start.getTime() - periodDuration);
+    const prevEnd = timeframe.start;
+    
+    const prevPurchases = Array.from(monetization.purchases?.values() || [])
+      .filter((p: any) => {
+        const purchaseDate = new Date(p.createdAt);
+        return purchaseDate >= prevStart && purchaseDate <= prevEnd && p.status === 'completed';
+      });
+    
+    const prevRevenue = prevPurchases.reduce((sum: number, p: any) => sum + p.amount, 0);
+    const revenueChange = prevRevenue > 0 ? ((totalRevenue - prevRevenue) / prevRevenue) * 100 : 0;
+    
+    // Конверсия: отношение покупок к сессиям
+    const totalSessions = Array.from(this.sessions.values())
+      .filter(s => s.startTime >= timeframe.start && s.startTime <= timeframe.end).length;
+    
+    const conversionRate = totalSessions > 0 ? (totalPurchases / totalSessions) * 100 : 0;
+    
+    const prevSessions = Array.from(this.sessions.values())
+      .filter(s => s.startTime >= prevStart && s.startTime <= prevEnd).length;
+    
+    const prevConversionRate = prevSessions > 0 ? (prevPurchases.length / prevSessions) * 100 : 0;
+    const conversionChange = conversionRate - prevConversionRate;
+    
+    // Средний чек
+    const avgOrderValue = totalPurchases > 0 ? totalRevenue / totalPurchases : 0;
+    const prevAvgOrderValue = prevPurchases.length > 0 ? 
+      prevRevenue / prevPurchases.length : 0;
+    const avgOrderChange = prevAvgOrderValue > 0 ? 
+      ((avgOrderValue - prevAvgOrderValue) / prevAvgOrderValue) * 100 : 0;
+    
     return {
-      total_revenue: { value: 25000, change: 12, trend: 'up' },
-      conversion_rate: { value: 3.2, change: 0.5, trend: 'up' },
-      avg_order_value: { value: 299, change: -15, trend: 'down' }
+      total_revenue: { 
+        value: Math.round(totalRevenue), 
+        change: Math.round(revenueChange), 
+        trend: revenueChange > 0 ? 'up' : revenueChange < 0 ? 'down' : 'stable' 
+      },
+      conversion_rate: { 
+        value: Math.round(conversionRate * 100) / 100, 
+        change: Math.round(conversionChange * 100) / 100, 
+        trend: conversionChange > 0 ? 'up' : conversionChange < 0 ? 'down' : 'stable' 
+      },
+      avg_order_value: { 
+        value: Math.round(avgOrderValue), 
+        change: Math.round(avgOrderChange), 
+        trend: avgOrderChange > 0 ? 'up' : avgOrderChange < 0 ? 'down' : 'stable' 
+      }
     };
   }
 
@@ -962,6 +1085,53 @@ class AnalyticsService extends EventEmitter {
     this.sessions.clear();
     this.realtimeData.clear();
     this.removeAllListeners();
+  }
+
+  // Публичный метод для обновления сессии по ID
+  public updateSession(sessionId: string, updates: {
+    duration?: number;
+    platform?: string;
+    language?: string;
+    events?: number;
+    endTime?: Date;
+  }): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      logger.warn(`Session ${sessionId} not found for update`);
+      return;
+    }
+
+    // Обновляем переданные поля
+    if (updates.duration !== undefined) {
+      session.endTime = new Date(session.startTime.getTime() + updates.duration);
+      session.isActive = false;
+    }
+
+    if (updates.platform !== undefined) {
+      session.deviceInfo = {
+        ...session.deviceInfo,
+        platform: updates.platform
+      };
+    }
+
+    if (updates.language !== undefined) {
+      session.deviceInfo = {
+        ...session.deviceInfo,
+        language: updates.language
+      };
+    }
+
+    if (updates.events !== undefined) {
+      session.events = Math.max(session.events, updates.events);
+    }
+
+    if (updates.endTime !== undefined) {
+      session.endTime = updates.endTime;
+      session.isActive = false;
+    }
+
+    session.lastActivity = new Date();
+    logger.debug(`Session ${sessionId} updated`, updates);
   }
 }
 

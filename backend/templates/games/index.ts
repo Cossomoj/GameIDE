@@ -2,6 +2,11 @@ import { GameTemplate } from './base';
 import { PlatformerTemplate } from './platformer';
 import { ArcadeTemplate } from './arcade';
 import { PuzzleTemplate } from './puzzle';
+import { RPGTemplate } from './rpg';
+import { StrategyTemplate } from './strategy';
+import { RacingTemplate } from './racing';
+import { FightingTemplate } from './fighting';
+import { SimulationTemplate } from './simulation';
 import { GamePrompt, GameDesign } from '../../src/types';
 
 export class GameTemplateManager {
@@ -17,10 +22,20 @@ export class GameTemplateManager {
     const platformer = new PlatformerTemplate();
     const arcade = new ArcadeTemplate();
     const puzzle = new PuzzleTemplate();
+    const rpg = new RPGTemplate();
+    const strategy = new StrategyTemplate();
+    const racing = new RacingTemplate();
+    const fighting = new FightingTemplate();
+    const simulation = new SimulationTemplate();
 
     this.templates.set(platformer.genre, platformer);
     this.templates.set(arcade.genre, arcade);
     this.templates.set(puzzle.genre, puzzle);
+    this.templates.set(rpg.genre, rpg);
+    this.templates.set(strategy.genre, strategy);
+    this.templates.set(racing.genre, racing);
+    this.templates.set(fighting.genre, fighting);
+    this.templates.set(simulation.genre, simulation);
   }
 
   public getTemplate(genre: string): GameTemplate | null {
@@ -97,4 +112,9 @@ export const templateManager = new GameTemplateManager();
 export { GameTemplate } from './base';
 export { PlatformerTemplate } from './platformer';
 export { ArcadeTemplate } from './arcade';
-export { PuzzleTemplate } from './puzzle'; 
+export { PuzzleTemplate } from './puzzle';
+export { RPGTemplate } from './rpg';
+export { StrategyTemplate } from './strategy';
+export { RacingTemplate } from './racing';
+export { FightingTemplate } from './fighting';
+export { SimulationTemplate } from './simulation'; 

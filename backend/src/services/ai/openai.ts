@@ -191,28 +191,406 @@ export class OpenAIService {
     return this.generateImage(prompt, style, '1024x1024');
   }
 
-  // Заглушка для генерации звука (OpenAI пока не поддерживает аудио генерацию)
+  // Полноценная генерация звуков с использованием синтетических алгоритмов
   public async generateSound(
     description: string,
     duration: number = 1000,
     type: 'sfx' | 'music' = 'sfx'
   ): Promise<AssetGenerationResult> {
-    // В будущем можно интегрировать с другими AI сервисами для звука
-    // Пока возвращаем заглушку
+    this.logger.info(`🎵 Генерация звука: "${description}" (${type}, ${duration}ms)`);
     
-    this.logger.warn(`Генерация звука "${description}" пока не поддерживается`);
+    try {
+      // Анализируем описание для определения типа звука
+      const soundType = this.analyzeSoundDescription(description, type);
+      
+      // Генерируем звук в зависимости от типа
+      let audioBuffer: Buffer;
+      
+      switch (soundType) {
+        case 'jump':
+          audioBuffer = this.generateJumpSound(duration);
+          break;
+        case 'coin':
+          audioBuffer = this.generateCoinSound(duration);
+          break;
+        case 'explosion':
+          audioBuffer = this.generateExplosionSound(duration);
+          break;
+        case 'laser':
+          audioBuffer = this.generateLaserSound(duration);
+          break;
+        case 'powerup':
+          audioBuffer = this.generatePowerUpSound(duration);
+          break;
+        case 'hit':
+          audioBuffer = this.generateHitSound(duration);
+          break;
+        case 'menu':
+          audioBuffer = this.generateMenuSound(duration);
+          break;
+        case 'background':
+          audioBuffer = this.generateBackgroundMusic(duration);
+          break;
+        case 'victory':
+          audioBuffer = this.generateVictorySound(duration);
+          break;
+        case 'defeat':
+          audioBuffer = this.generateDefeatSound(duration);
+          break;
+        default:
+          audioBuffer = this.generateGenericSound(duration, soundType);
+      }
+      
+      this.logger.info(`✅ Звук сгенерирован: ${audioBuffer.length} bytes`);
+      
+      return {
+        type: 'audio',
+        data: audioBuffer,
+        metadata: {
+          size: audioBuffer.length,
+          format: 'wav',
+          duration,
+          soundType,
+          description
+        },
+      };
+    } catch (error) {
+      this.logger.error('Ошибка генерации звука', { error, description, type, duration });
+      
+      // В случае ошибки возвращаем простой синтетический звук
+      const fallbackBuffer = this.generateGenericSound(duration, 'beep');
+      return {
+        type: 'audio',
+        data: fallbackBuffer,
+        metadata: {
+          size: fallbackBuffer.length,
+          format: 'wav',
+          duration,
+          soundType: 'fallback'
+        },
+      };
+    }
+  }
+
+  private analyzeSoundDescription(description: string, type: 'sfx' | 'music'): string {
+    const desc = description.toLowerCase();
     
-    // Создаем простой синтетический звук
-    const dummyAudioBuffer = this.generateDummyAudio(duration);
+    // Звуки прыжка
+    if (desc.includes('jump') || desc.includes('прыжок') || desc.includes('hop')) {
+      return 'jump';
+    }
     
-    return {
-      type: 'audio',
-      data: dummyAudioBuffer,
-      metadata: {
-        size: dummyAudioBuffer.length,
-        format: 'wav',
-      },
-    };
+    // Звуки монет/очков
+    if (desc.includes('coin') || desc.includes('монета') || desc.includes('collect') || desc.includes('pickup')) {
+      return 'coin';
+    }
+    
+    // Взрывы
+    if (desc.includes('explosion') || desc.includes('взрыв') || desc.includes('boom') || desc.includes('blast')) {
+      return 'explosion';
+    }
+    
+    // Лазеры/выстрелы
+    if (desc.includes('laser') || desc.includes('лазер') || desc.includes('shoot') || desc.includes('выстрел')) {
+      return 'laser';
+    }
+    
+    // Усиления
+    if (desc.includes('powerup') || desc.includes('power') || desc.includes('усиление') || desc.includes('бонус')) {
+      return 'powerup';
+    }
+    
+    // Удары
+    if (desc.includes('hit') || desc.includes('удар') || desc.includes('damage') || desc.includes('урон')) {
+      return 'hit';
+    }
+    
+    // Меню
+    if (desc.includes('menu') || desc.includes('меню') || desc.includes('click') || desc.includes('button')) {
+      return 'menu';
+    }
+    
+    // Победа
+    if (desc.includes('victory') || desc.includes('победа') || desc.includes('win') || desc.includes('success')) {
+      return 'victory';
+    }
+    
+    // Поражение
+    if (desc.includes('defeat') || desc.includes('поражение') || desc.includes('lose') || desc.includes('death')) {
+      return 'defeat';
+    }
+    
+    // Фоновая музыка
+    if (type === 'music' || desc.includes('background') || desc.includes('фон') || desc.includes('theme')) {
+      return 'background';
+    }
+    
+    return 'generic';
+  }
+
+  private generateJumpSound(duration: number): Buffer {
+    const sampleRate = 44100;
+    const samples = Math.floor((duration / 1000) * sampleRate);
+    const buffer = this.createWAVHeader(samples);
+    
+    // Звук прыжка: быстрое повышение частоты
+    for (let i = 0; i < samples; i++) {
+      const progress = i / samples;
+      const frequency = 200 + progress * 400; // 200Hz -> 600Hz
+      const amplitude = Math.exp(-progress * 5) * 0.3; // Затухание
+      const sample = Math.sin(2 * Math.PI * frequency * i / sampleRate) * amplitude;
+      const intSample = Math.round(sample * 32767);
+      buffer.writeInt16LE(intSample, 44 + i * 2);
+    }
+    
+    return buffer;
+  }
+
+  private generateCoinSound(duration: number): Buffer {
+    const sampleRate = 44100;
+    const samples = Math.floor((duration / 1000) * sampleRate);
+    const buffer = this.createWAVHeader(samples);
+    
+    // Звук монеты: две быстрые ноты
+    for (let i = 0; i < samples; i++) {
+      const progress = i / samples;
+      const frequency = progress < 0.3 ? 800 : 1200; // Две ноты
+      const amplitude = Math.exp(-progress * 3) * 0.4;
+      const sample = Math.sin(2 * Math.PI * frequency * i / sampleRate) * amplitude;
+      const intSample = Math.round(sample * 32767);
+      buffer.writeInt16LE(intSample, 44 + i * 2);
+    }
+    
+    return buffer;
+  }
+
+  private generateExplosionSound(duration: number): Buffer {
+    const sampleRate = 44100;
+    const samples = Math.floor((duration / 1000) * sampleRate);
+    const buffer = this.createWAVHeader(samples);
+    
+    // Звук взрыва: белый шум с низкими частотами
+    for (let i = 0; i < samples; i++) {
+      const progress = i / samples;
+      const amplitude = Math.exp(-progress * 2) * 0.6;
+      
+      // Комбинируем низкую частоту и шум
+      const lowFreq = Math.sin(2 * Math.PI * 60 * i / sampleRate) * 0.7;
+      const noise = (Math.random() - 0.5) * 0.5;
+      const sample = (lowFreq + noise) * amplitude;
+      
+      const intSample = Math.round(sample * 32767);
+      buffer.writeInt16LE(intSample, 44 + i * 2);
+    }
+    
+    return buffer;
+  }
+
+  private generateLaserSound(duration: number): Buffer {
+    const sampleRate = 44100;
+    const samples = Math.floor((duration / 1000) * sampleRate);
+    const buffer = this.createWAVHeader(samples);
+    
+    // Звук лазера: высокая частота с модуляцией
+    for (let i = 0; i < samples; i++) {
+      const progress = i / samples;
+      const baseFreq = 1500;
+      const modulation = Math.sin(2 * Math.PI * 20 * i / sampleRate) * 200;
+      const frequency = baseFreq + modulation;
+      const amplitude = Math.exp(-progress * 4) * 0.4;
+      const sample = Math.sin(2 * Math.PI * frequency * i / sampleRate) * amplitude;
+      const intSample = Math.round(sample * 32767);
+      buffer.writeInt16LE(intSample, 44 + i * 2);
+    }
+    
+    return buffer;
+  }
+
+  private generatePowerUpSound(duration: number): Buffer {
+    const sampleRate = 44100;
+    const samples = Math.floor((duration / 1000) * sampleRate);
+    const buffer = this.createWAVHeader(samples);
+    
+    // Звук усиления: восходящие аккорды
+    const frequencies = [261, 329, 392, 523]; // C, E, G, C (до мажор)
+    
+    for (let i = 0; i < samples; i++) {
+      const progress = i / samples;
+      let sample = 0;
+      
+      // Играем аккорд с задержкой для каждой ноты
+      frequencies.forEach((freq, index) => {
+        const noteStart = index * 0.2;
+        if (progress >= noteStart) {
+          const noteProgress = (progress - noteStart) / (1 - noteStart);
+          const amplitude = Math.exp(-noteProgress * 2) * 0.15;
+          sample += Math.sin(2 * Math.PI * freq * i / sampleRate) * amplitude;
+        }
+      });
+      
+      const intSample = Math.round(sample * 32767);
+      buffer.writeInt16LE(intSample, 44 + i * 2);
+    }
+    
+    return buffer;
+  }
+
+  private generateHitSound(duration: number): Buffer {
+    const sampleRate = 44100;
+    const samples = Math.floor((duration / 1000) * sampleRate);
+    const buffer = this.createWAVHeader(samples);
+    
+    // Звук удара: резкий низкочастотный импульс
+    for (let i = 0; i < samples; i++) {
+      const progress = i / samples;
+      const amplitude = Math.exp(-progress * 8) * 0.7;
+      
+      // Комбинируем низкую частоту и небольшой шум
+      const lowFreq = Math.sin(2 * Math.PI * 120 * i / sampleRate);
+      const click = i < samples * 0.1 ? (Math.random() - 0.5) * 0.3 : 0;
+      const sample = (lowFreq + click) * amplitude;
+      
+      const intSample = Math.round(sample * 32767);
+      buffer.writeInt16LE(intSample, 44 + i * 2);
+    }
+    
+    return buffer;
+  }
+
+  private generateMenuSound(duration: number): Buffer {
+    const sampleRate = 44100;
+    const samples = Math.floor((duration / 1000) * sampleRate);
+    const buffer = this.createWAVHeader(samples);
+    
+    // Звук меню: короткий чистый тон
+    for (let i = 0; i < samples; i++) {
+      const progress = i / samples;
+      const frequency = 800;
+      const amplitude = progress < 0.1 ? progress * 10 * 0.3 : 
+                      progress > 0.8 ? (1 - progress) * 5 * 0.3 : 0.3;
+      const sample = Math.sin(2 * Math.PI * frequency * i / sampleRate) * amplitude;
+      const intSample = Math.round(sample * 32767);
+      buffer.writeInt16LE(intSample, 44 + i * 2);
+    }
+    
+    return buffer;
+  }
+
+  private generateBackgroundMusic(duration: number): Buffer {
+    const sampleRate = 44100;
+    const samples = Math.floor((duration / 1000) * sampleRate);
+    const buffer = this.createWAVHeader(samples);
+    
+    // Фоновая музыка: простая мелодия
+    const melody = [261, 294, 329, 349, 392, 440, 493, 523]; // C major scale
+    
+    for (let i = 0; i < samples; i++) {
+      const progress = i / samples;
+      const noteIndex = Math.floor(progress * melody.length);
+      const frequency = melody[noteIndex] || melody[0];
+      
+      // Мягкая амплитуда для фона
+      const amplitude = 0.1 * (1 + Math.sin(2 * Math.PI * 0.5 * i / sampleRate) * 0.1);
+      const sample = Math.sin(2 * Math.PI * frequency * i / sampleRate) * amplitude;
+      const intSample = Math.round(sample * 32767);
+      buffer.writeInt16LE(intSample, 44 + i * 2);
+    }
+    
+    return buffer;
+  }
+
+  private generateVictorySound(duration: number): Buffer {
+    const sampleRate = 44100;
+    const samples = Math.floor((duration / 1000) * sampleRate);
+    const buffer = this.createWAVHeader(samples);
+    
+    // Звук победы: торжественная последовательность
+    const victoryMelody = [523, 659, 784, 1047]; // C, E, G, C (octave)
+    
+    for (let i = 0; i < samples; i++) {
+      const progress = i / samples;
+      let sample = 0;
+      
+      victoryMelody.forEach((freq, index) => {
+        const noteStart = index * 0.25;
+        const noteEnd = (index + 1) * 0.25;
+        
+        if (progress >= noteStart && progress < noteEnd) {
+          const noteProgress = (progress - noteStart) / 0.25;
+          const amplitude = Math.sin(Math.PI * noteProgress) * 0.2;
+          sample += Math.sin(2 * Math.PI * freq * i / sampleRate) * amplitude;
+        }
+      });
+      
+      const intSample = Math.round(sample * 32767);
+      buffer.writeInt16LE(intSample, 44 + i * 2);
+    }
+    
+    return buffer;
+  }
+
+  private generateDefeatSound(duration: number): Buffer {
+    const sampleRate = 44100;
+    const samples = Math.floor((duration / 1000) * sampleRate);
+    const buffer = this.createWAVHeader(samples);
+    
+    // Звук поражения: нисходящая последовательность
+    for (let i = 0; i < samples; i++) {
+      const progress = i / samples;
+      const frequency = 400 - progress * 200; // 400Hz -> 200Hz
+      const amplitude = 0.3;
+      const sample = Math.sin(2 * Math.PI * frequency * i / sampleRate) * amplitude;
+      const intSample = Math.round(sample * 32767);
+      buffer.writeInt16LE(intSample, 44 + i * 2);
+    }
+    
+    return buffer;
+  }
+
+  private generateGenericSound(duration: number, type: string): Buffer {
+    const sampleRate = 44100;
+    const samples = Math.floor((duration / 1000) * sampleRate);
+    const buffer = this.createWAVHeader(samples);
+    
+    // Универсальный звук: простой сигнал
+    const frequency = 440; // Ля первой октавы
+    
+    for (let i = 0; i < samples; i++) {
+      const progress = i / samples;
+      const amplitude = Math.sin(Math.PI * progress) * 0.3; // Плавное нарастание и затухание
+      const sample = Math.sin(2 * Math.PI * frequency * i / sampleRate) * amplitude;
+      const intSample = Math.round(sample * 32767);
+      buffer.writeInt16LE(intSample, 44 + i * 2);
+    }
+    
+    return buffer;
+  }
+
+  private createWAVHeader(samples: number): Buffer {
+    const buffer = Buffer.alloc(44 + samples * 2);
+    const sampleRate = 44100;
+    
+    // WAV заголовок
+    buffer.write('RIFF', 0);
+    buffer.writeUInt32LE(36 + samples * 2, 4);
+    buffer.write('WAVE', 8);
+    buffer.write('fmt ', 12);
+    buffer.writeUInt32LE(16, 16);
+    buffer.writeUInt16LE(1, 20); // PCM format
+    buffer.writeUInt16LE(1, 22); // Mono
+    buffer.writeUInt32LE(sampleRate, 24);
+    buffer.writeUInt32LE(sampleRate * 2, 28);
+    buffer.writeUInt16LE(2, 32);
+    buffer.writeUInt16LE(16, 34); // 16-bit
+    buffer.write('data', 36);
+    buffer.writeUInt32LE(samples * 2, 40);
+    
+    return buffer;
+  }
+
+  private generateDummyAudio(duration: number): Buffer {
+    // Заменяем на генерацию простого звука вместо тишины
+    return this.generateGenericSound(duration, 'beep');
   }
 
   private enhanceImagePrompt(prompt: string, style: string): string {
@@ -246,33 +624,6 @@ export class OpenAIService {
   private parseDimensions(size: string): { width: number; height: number } {
     const [width, height] = size.split('x').map(Number);
     return { width, height };
-  }
-
-  private generateDummyAudio(duration: number): Buffer {
-    // Создаем простой WAV файл с тишиной
-    const sampleRate = 44100;
-    const samples = Math.floor((duration / 1000) * sampleRate);
-    const buffer = Buffer.alloc(44 + samples * 2);
-    
-    // WAV заголовок
-    buffer.write('RIFF', 0);
-    buffer.writeUInt32LE(36 + samples * 2, 4);
-    buffer.write('WAVE', 8);
-    buffer.write('fmt ', 12);
-    buffer.writeUInt32LE(16, 16);
-    buffer.writeUInt16LE(1, 20);
-    buffer.writeUInt16LE(1, 22);
-    buffer.writeUInt32LE(sampleRate, 24);
-    buffer.writeUInt32LE(sampleRate * 2, 28);
-    buffer.writeUInt16LE(2, 32);
-    buffer.writeUInt16LE(16, 34);
-    buffer.write('data', 36);
-    buffer.writeUInt32LE(samples * 2, 40);
-    
-    // Данные (тишина)
-    buffer.fill(0, 44);
-    
-    return buffer;
   }
 
   private checkRateLimit(): void {

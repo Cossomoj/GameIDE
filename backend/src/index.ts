@@ -6,14 +6,14 @@ import rateLimit from 'express-rate-limit';
 import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 
-import config, { validateConfig } from '@/config';
-import { setupDatabase } from '@/database';
-import { setupRoutes } from '@/routes';
-import { setupWebSocket } from '@/services/websocket';
-import { QueueService } from '@/services/queue';
-import { LoggerService } from '@/services/logger';
-import { errorHandler } from '@/middleware/errorHandler';
-import { requestLogger } from '@/middleware/requestLogger';
+import config, { validateConfig } from './config';
+import { setupDatabase } from './database';
+import { setupRoutes } from './routes';
+import { setupWebSocket } from './services/websocket';
+import { QueueService } from './services/queue';
+import { LoggerService } from './services/logger';
+import { errorHandler } from './middleware/errorHandler';
+import { requestLogger } from './middleware/requestLogger';
 
 class App {
   public app: express.Application;
@@ -118,8 +118,12 @@ class App {
       // Валидация конфигурации
       validateConfig();
 
-      // Инициализация базы данных
-      await setupDatabase();
+      // Инициализация базы данных (с fallback)
+      try {
+        await setupDatabase();
+      } catch (dbError) {
+        this.logger.warn('⚠️ База данных недоступна, продолжаем без неё:', dbError);
+      }
 
       // Создание HTTP сервера
       this.server = createServer(this.app);
@@ -132,8 +136,12 @@ class App {
 
       setupWebSocket(this.io);
 
-      // Инициализация сервиса очередей
-      await this.queueService.initialize();
+      // Инициализация сервиса очередей (с fallback)
+      try {
+        await this.queueService.initialize();
+      } catch (queueError) {
+        this.logger.warn('⚠️ Очередь (Redis) недоступна, продолжаем без неё:', queueError);
+      }
 
       // Запуск сервера
       this.server.listen(config.server.port, config.server.host, () => {
@@ -201,6 +209,9 @@ class App {
     });
   }
 }
+
+// Увеличиваем лимит слушателей событий для избежания warnings
+process.setMaxListeners(0); // Безлимитный режим для диагностики
 
 // Запуск приложения
 const app = new App();

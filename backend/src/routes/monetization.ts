@@ -85,29 +85,57 @@ router.post('/purchase', async (req, res) => {
 
     const purchase = await monetizationService.createPurchase(userId, planId, paymentMethod);
     
-    // В реальном приложении здесь была бы интеграция с платежной системой
-    // Симулируем обработку платежа
-    setTimeout(async () => {
-      const success = Math.random() > 0.1; // 90% успешных платежей
-      if (success) {
-        await monetizationService.completePurchase(purchase.id);
-        logger.info(`Purchase ${purchase.id} completed successfully`);
+    // Реальная интеграция с Yandex Money API
+    try {
+      const paymentData = await monetizationService.processYandexPayment(purchase);
+      
+      if (paymentData.status === 'pending') {
+        res.json({
+          success: true,
+          data: {
+            purchaseId: purchase.id,
+            amount: purchase.amount,
+            currency: purchase.currency,
+            status: purchase.status,
+            paymentUrl: paymentData.confirmation_url,
+            paymentId: paymentData.id,
+            expires_at: paymentData.expires_at
+          }
+        });
       } else {
-        logger.warn(`Purchase ${purchase.id} failed`);
+        throw new Error(`Payment creation failed: ${paymentData.status}`);
       }
-    }, 2000);
-
-    res.json({
-      success: true,
-      data: {
-        purchaseId: purchase.id,
-        amount: purchase.amount,
-        currency: purchase.currency,
-        status: purchase.status,
-        // В реальном приложении здесь был бы URL для редиректа на платежную форму
-        paymentUrl: `/payment/${purchase.id}`
+    } catch (paymentError) {
+      logger.error('Error processing Yandex payment:', paymentError);
+      
+      // Fallback для других методов оплаты
+      if (paymentMethod === 'demo' || process.env.NODE_ENV === 'development') {
+        // Симуляция только в режиме разработки
+        setTimeout(async () => {
+          const success = Math.random() > 0.1; // 90% успешных платежей
+          if (success) {
+            await monetizationService.completePurchase(purchase.id);
+            logger.info(`Demo purchase ${purchase.id} completed successfully`);
+          } else {
+            logger.warn(`Demo purchase ${purchase.id} failed`);
+          }
+        }, 2000);
+        
+        res.json({
+          success: true,
+          data: {
+            purchaseId: purchase.id,
+            amount: purchase.amount,
+            currency: purchase.currency,
+            status: purchase.status,
+            paymentUrl: `/payment/demo/${purchase.id}`,
+            demo: true
+          }
+        });
+      } else {
+        throw paymentError;
       }
-    });
+    }
   } catch (error) {
     logger.error('Error creating purchase:', error);
     res.status(500).json({
@@ -333,6 +361,65 @@ router.post('/yandex/payment-info', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to process payment info'
+    });
+  }
+});
+
+// Webhook для уведомлений от Yandex Money
+router.post('/webhook/yandex', async (req, res) => {
+  try {
+    logger.info('Received Yandex Money webhook:', req.body);
+    
+    const success = await monetizationService.handleYandexWebhook(req.body);
+    
+    if (success) {
+      res.status(200).json({ success: true });
+    } else {
+      res.status(400).json({ success: false, error: 'Webhook processing failed' });
+    }
+  } catch (error) {
+    logger.error('Error processing Yandex webhook:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Проверка статуса платежа
+router.get('/payment/:purchaseId/status', async (req, res) => {
+  try {
+    const { purchaseId } = req.params;
+    const userId = req.headers['x-user-id'] as string || 'anonymous';
+    
+    const purchases = monetizationService.getUserPurchases(userId);
+    const purchase = purchases.find(p => p.id === purchaseId);
+    
+    if (!purchase) {
+      return res.status(404).json({
+        success: false,
+        error: 'Purchase not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: {
+        purchaseId: purchase.id,
+        status: purchase.status,
+        amount: purchase.amount,
+        currency: purchase.currency,
+        createdAt: purchase.createdAt,
+        completedAt: purchase.completedAt,
+        paymentMethod: purchase.paymentMethod,
+        metadata: purchase.metadata
+      }
+    });
+  } catch (error) {
+    logger.error('Error getting payment status:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get payment status'
     });
   }
 });

@@ -1,7 +1,7 @@
 import { io, Socket } from 'socket.io-client';
 import { WSMessage, ProgressData, LogData, ErrorData, CompletedData } from '@/types';
 
-const WS_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+const WS_URL = import.meta.env.VITE_WS_URL || 'http://localhost:3001';
 
 class WebSocketService {
   private socket: Socket | null = null;

@@ -67,7 +67,7 @@
     " />
     
     <!-- Preload критических ресурсов -->
-    <link rel="preload" href="/fonts/inter-var.woff2" as="font" type="font/woff2" crossorigin />
+    <!-- Font preload removed - using system fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     
@@ -214,16 +214,29 @@
       }
       
       // Скрытие загрузочного экрана
+      function hideLoadingScreen() {
+        const loadingScreen = document.getElementById('loading-screen');
+        if (loadingScreen) {
+          console.log('🎯 Скрываем loading screen...');
+          loadingScreen.classList.add('hidden');
+          setTimeout(() => {
+            loadingScreen.remove();
+            console.log('✅ Loading screen удален');
+          }, 500);
+        }
+      }
+
+      // Множественные попытки скрыть loading screen
+      setTimeout(hideLoadingScreen, 1000);
+      setTimeout(hideLoadingScreen, 3000);
+      setTimeout(hideLoadingScreen, 5000);
+      
       window.addEventListener('load', () => {
-        setTimeout(() => {
-          const loadingScreen = document.getElementById('loading-screen');
-          if (loadingScreen) {
-            loadingScreen.classList.add('hidden');
-            setTimeout(() => {
-              loadingScreen.remove();
-            }, 500);
-          }
-        }, 1000);
+        setTimeout(hideLoadingScreen, 1000);
+      });
+      
+      window.addEventListener('DOMContentLoaded', () => {
+        setTimeout(hideLoadingScreen, 2000);
       });
       
       // Предотвращение контекстного меню на мобильных устройствах

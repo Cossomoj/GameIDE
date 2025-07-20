@@ -641,6 +641,128 @@ class MonetizationService {
   getUserMetrics(userId: string): UserMetrics | undefined {
     return this.userMetrics.get(userId);
   }
+
+  // Обработка платежа через Yandex Money API
+  async processYandexPayment(purchase: PurchaseData): Promise<any> {
+    const yandexConfig = {
+      shop_id: process.env.YANDEX_MONEY_SHOP_ID,
+      secret_key: process.env.YANDEX_MONEY_SECRET_KEY,
+      endpoint: process.env.YANDEX_MONEY_ENDPOINT || 'https://api.yookassa.ru/v3/payments'
+    };
+
+    if (!yandexConfig.shop_id || !yandexConfig.secret_key) {
+      throw new Error('Yandex Money credentials not configured');
+    }
+
+    try {
+      const paymentData = {
+        amount: {
+          value: purchase.amount.toFixed(2),
+          currency: purchase.currency
+        },
+        confirmation: {
+          type: 'redirect',
+          return_url: `${process.env.FRONTEND_URL}/payment/success?purchase=${purchase.id}`
+        },
+        capture: true,
+        description: `Покупка плана: ${this.paymentPlans.get(purchase.planId)?.name || 'Unknown'}`,
+        metadata: {
+          purchase_id: purchase.id,
+          user_id: purchase.userId,
+          plan_id: purchase.planId,
+          ab_test: purchase.abTestId,
+          ab_variant: purchase.abVariantId
+        }
+      };
+
+      const response = await fetch(yandexConfig.endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotence-Key': purchase.id,
+          'Authorization': `Basic ${Buffer.from(`${yandexConfig.shop_id}:${yandexConfig.secret_key}`).toString('base64')}`
+        },
+        body: JSON.stringify(paymentData)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(`Yandex Money API error: ${errorData.description || response.statusText}`);
+      }
+
+      const responseData = await response.json();
+      
+      // Сохраняем ID платежа Yandex в метаданных покупки
+      purchase.metadata = {
+        ...purchase.metadata,
+        yandex_payment_id: responseData.id,
+        payment_status: responseData.status,
+        confirmation_url: responseData.confirmation?.confirmation_url
+      };
+
+      logger.info(`Yandex payment created: ${responseData.id} for purchase ${purchase.id}`);
+      
+      return responseData;
+    } catch (error) {
+      logger.error('Error creating Yandex payment:', error);
+      throw error;
+    }
+  }
+
+  // Webhook для обработки уведомлений от Yandex Money
+  async handleYandexWebhook(webhookData: any): Promise<boolean> {
+    try {
+      const paymentId = webhookData.object?.id;
+      const status = webhookData.object?.status;
+      const purchaseId = webhookData.object?.metadata?.purchase_id;
+
+      if (!purchaseId) {
+        logger.warn('Webhook without purchase_id:', webhookData);
+        return false;
+      }
+
+      const purchase = this.purchases.get(purchaseId);
+      if (!purchase) {
+        logger.warn(`Purchase not found for webhook: ${purchaseId}`);
+        return false;
+      }
+
+      // Обновляем статус покупки на основе статуса платежа
+      switch (status) {
+        case 'succeeded':
+          purchase.status = 'completed';
+          purchase.completedAt = new Date();
+          await this.completePurchase(purchaseId);
+          logger.info(`Payment succeeded: ${paymentId}, purchase: ${purchaseId}`);
+          break;
+        
+        case 'canceled':
+          purchase.status = 'failed';
+          purchase.metadata = {
+            ...purchase.metadata,
+            cancellation_reason: webhookData.object?.cancellation_details?.reason
+          };
+          logger.info(`Payment canceled: ${paymentId}, purchase: ${purchaseId}`);
+          break;
+        
+        default:
+          logger.info(`Payment status update: ${status} for ${paymentId}`);
+          break;
+      }
+
+      // Обновляем метаданные платежа
+      purchase.metadata = {
+        ...purchase.metadata,
+        yandex_payment_status: status,
+        last_webhook: Date.now()
+      };
+
+      return true;
+    } catch (error) {
+      logger.error('Error handling Yandex webhook:', error);
+      return false;
+    }
+  }
 }
 
 export const monetizationService = new MonetizationService(); 

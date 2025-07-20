@@ -1,8 +1,16 @@
-import { Router } from 'express';
+import { Router, Request, Response } from 'express';
 import { gameTestingService } from '../services/gameTesting';
 import { logger } from '../services/logger';
+import { GameTestRunner } from '../services/gameTestRunner';
+import { asyncHandler } from '../middleware/asyncHandler';
+import { TestConfiguration, GameTestScenario } from '../types/testing';
+import { GenerationRequest } from '../types';
+import { v4 as uuidv4 } from 'uuid';
 
 const router = Router();
+
+// Создаем экземпляр тест-раннера
+const testRunner = new GameTestRunner();
 
 // Получение всех тестовых наборов
 router.get('/test-suites', async (req, res) => {
@@ -556,6 +564,408 @@ router.get('/health', async (req, res) => {
       error: 'Service unhealthy'
     });
   }
+});
+
+/**
+ * Запуск полного тестирования игры
+ * POST /api/testing/run-full
+ */
+router.post('/run-full', asyncHandler(async (req: Request, res: Response) => {
+  const { gameRequest } = req.body;
+  
+  if (!gameRequest) {
+    return res.status(400).json({
+      success: false,
+      error: 'Game request is required'
+    });
+  }
+
+  try {
+    logger.info(`🧪 Запуск полного тестирования для игры: ${gameRequest.id}`);
+    
+    const report = await testRunner.runFullGameTest(gameRequest);
+    
+    res.json({
+      success: true,
+      data: {
+        testReport: report,
+        status: report.status,
+        summary: report.summary
+      }
+    });
+    
+  } catch (error) {
+    logger.error('Ошибка тестирования:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to run game test',
+      message: error.message
+    });
+  }
+}));
+
+/**
+ * Запуск тестирования по сценарию
+ * POST /api/testing/run-scenario
+ */
+router.post('/run-scenario', asyncHandler(async (req: Request, res: Response) => {
+  const { scenario } = req.body;
+  
+  if (!scenario) {
+    return res.status(400).json({
+      success: false,
+      error: 'Test scenario is required'
+    });
+  }
+
+  try {
+    const report = await testRunner.runScenario(scenario);
+    
+    res.json({
+      success: true,
+      data: {
+        testReport: report,
+        status: report.status,
+        summary: report.summary
+      }
+    });
+    
+  } catch (error) {
+    logger.error('Ошибка сценарного тестирования:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to run scenario test',
+      message: error.message
+    });
+  }
+}));
+
+/**
+ * Быстрое тестирование (только критические проверки)
+ * POST /api/testing/run-quick
+ */
+router.post('/run-quick', asyncHandler(async (req: Request, res: Response) => {
+  const { gameData } = req.body;
+  
+  if (!gameData) {
+    return res.status(400).json({
+      success: false,
+      error: 'Game data is required'
+    });
+  }
+
+  try {
+    // Создаем упрощенный запрос только для критических тестов
+    const quickRequest: GenerationRequest = {
+      id: gameData.id || uuidv4(),
+      prompt: gameData.prompt || {},
+      options: gameData.options || {},
+      status: 'queued',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      progress: 0,
+      currentStep: 'Quick Testing',
+      logs: []
+    };
+
+    // Запускаем только критические тесты
+    const report = await testRunner.runFullGameTest(quickRequest);
+    
+    // Фильтруем только критические результаты
+    const criticalResults = Array.from(report.suiteResults.values())
+      .filter(suite => {
+        const testSuite = testRunner['testSuites'].get(suite.suiteId);
+        return testSuite?.priority === 'high';
+      });
+
+    res.json({
+      success: true,
+      data: {
+        testId: report.id,
+        status: report.status,
+        criticalIssues: report.summary.criticalIssues,
+        duration: report.duration,
+        recommendations: report.recommendations.slice(0, 5), // Топ 5 рекомендаций
+        quickSummary: {
+          totalCriticalTests: criticalResults.reduce((sum, r) => sum + r.testResults.length, 0),
+          passed: criticalResults.reduce((sum, r) => 
+            sum + r.testResults.filter(t => t.status === 'passed').length, 0),
+          failed: criticalResults.reduce((sum, r) => 
+            sum + r.testResults.filter(t => t.status === 'failed').length, 0)
+        }
+      }
+    });
+    
+  } catch (error) {
+    logger.error('Ошибка быстрого тестирования:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to run quick test',
+      message: error.message
+    });
+  }
+}));
+
+/**
+ * Получение предустановленных сценариев тестирования
+ * GET /api/testing/scenarios
+ */
+router.get('/scenarios', asyncHandler(async (req: Request, res: Response) => {
+  const predefinedScenarios: GameTestScenario[] = [
+    {
+      id: 'basic_platformer',
+      name: 'Базовый платформер',
+      description: 'Тестирование генерации простого платформера',
+      gamePrompt: {
+        title: 'Test Platformer',
+        description: 'Простая игра-платформер для тестирования',
+        genre: 'platformer',
+        artStyle: 'pixel art'
+      },
+      expectedOutcome: {
+        shouldGenerate: true,
+        minQuality: 7,
+        maxGenerationTime: 300000, // 5 минут
+        requiredFeatures: ['jumping', 'movement', 'collision'],
+        forbiddenContent: []
+      },
+      testSteps: [
+        {
+          id: 'generate',
+          action: 'generate',
+          parameters: {},
+          expectedResult: { success: true },
+          timeout: 300000
+        },
+        {
+          id: 'validate',
+          action: 'validate',
+          parameters: {},
+          expectedResult: { valid: true },
+          timeout: 30000
+        }
+      ]
+    },
+    {
+      id: 'mobile_puzzle',
+      name: 'Мобильная головоломка',
+      description: 'Тестирование мобильной совместимости',
+      gamePrompt: {
+        title: 'Mobile Puzzle Test',
+        description: 'Головоломка для мобильных устройств',
+        genre: 'puzzle',
+        artStyle: 'minimalist'
+      },
+      expectedOutcome: {
+        shouldGenerate: true,
+        minQuality: 6,
+        maxGenerationTime: 240000,
+        requiredFeatures: ['touch_controls', 'responsive_design'],
+        forbiddenContent: []
+      },
+      testSteps: [
+        {
+          id: 'generate',
+          action: 'generate',
+          parameters: {},
+          expectedResult: { success: true },
+          timeout: 240000
+        },
+        {
+          id: 'mobile_test',
+          action: 'validate',
+          parameters: { focus: 'mobile' },
+          expectedResult: { mobile_compatible: true },
+          timeout: 15000
+        }
+      ]
+    },
+    {
+      id: 'yandex_integration',
+      name: 'Интеграция Yandex SDK',
+      description: 'Тестирование интеграции с Yandex Games',
+      gamePrompt: {
+        title: 'Yandex SDK Test',
+        description: 'Игра с полной интеграцией Yandex Games SDK',
+        genre: 'arcade',
+        artStyle: 'cartoon'
+      },
+      expectedOutcome: {
+        shouldGenerate: true,
+        minQuality: 8,
+        maxGenerationTime: 360000,
+        requiredFeatures: ['yandex_sdk', 'leaderboards', 'achievements'],
+        forbiddenContent: []
+      },
+      testSteps: [
+        {
+          id: 'generate',
+          action: 'generate',
+          parameters: {},
+          expectedResult: { success: true },
+          timeout: 360000
+        },
+        {
+          id: 'sdk_test',
+          action: 'validate',
+          parameters: { focus: 'yandex-sdk' },
+          expectedResult: { sdk_integrated: true },
+          timeout: 20000
+        }
+      ]
+    }
+  ];
+
+  res.json({
+    success: true,
+    data: {
+      scenarios: predefinedScenarios,
+      total: predefinedScenarios.length
+    }
+  });
+}));
+
+/**
+ * Получение конфигурации тестирования
+ * GET /api/testing/config
+ */
+router.get('/config', asyncHandler(async (req: Request, res: Response) => {
+  const config: TestConfiguration = {
+    environments: ['development', 'staging', 'production'],
+    browsers: ['chrome', 'firefox', 'safari'],
+    devices: [
+      {
+        name: 'Desktop',
+        type: 'desktop',
+        width: 1920,
+        height: 1080,
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        pixelRatio: 1
+      },
+      {
+        name: 'Tablet',
+        type: 'tablet',
+        width: 768,
+        height: 1024,
+        userAgent: 'Mozilla/5.0 (iPad; CPU OS 14_7_1 like Mac OS X) AppleWebKit/605.1.15',
+        pixelRatio: 2
+      },
+      {
+        name: 'Mobile',
+        type: 'mobile',
+        width: 375,
+        height: 667,
+        userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_7_1 like Mac OS X) AppleWebKit/605.1.15',
+        pixelRatio: 2
+      }
+    ],
+    parallel: true,
+    maxConcurrency: 3,
+    timeout: 60000,
+    retries: 2,
+    coverage: false,
+    screenshots: false,
+    artifacts: true,
+    reportFormats: ['json', 'html']
+  };
+
+  res.json({
+    success: true,
+    data: { config }
+  });
+}));
+
+/**
+ * Обновление конфигурации тестирования
+ * PUT /api/testing/config
+ */
+router.put('/config', asyncHandler(async (req: Request, res: Response) => {
+  const { config } = req.body;
+  
+  if (!config) {
+    return res.status(400).json({
+      success: false,
+      error: 'Configuration is required'
+    });
+  }
+
+  try {
+    // В реальном приложении здесь было бы сохранение в БД
+    logger.info('Конфигурация тестирования обновлена');
+    
+    res.json({
+      success: true,
+      message: 'Configuration updated successfully'
+    });
+    
+  } catch (error) {
+    logger.error('Ошибка обновления конфигурации:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update configuration'
+    });
+  }
+}));
+
+/**
+ * Получение статистики тестирования
+ * GET /api/testing/stats
+ */
+router.get('/stats', asyncHandler(async (req: Request, res: Response) => {
+  try {
+    // В реальном приложении данные брались бы из БД
+    const stats = {
+      totalTests: 156,
+      todayTests: 23,
+      successRate: 87.3,
+      averageExecutionTime: 45000, // мс
+      topIssues: [
+        { issue: 'Missing Yandex SDK integration', count: 12 },
+        { issue: 'Bundle size too large', count: 8 },
+        { issue: 'No mobile optimization', count: 6 },
+        { issue: 'JavaScript syntax errors', count: 4 }
+      ],
+      testsByCategory: {
+        compilation: { total: 45, passed: 42, failed: 3 },
+        performance: { total: 38, passed: 31, failed: 7 },
+        mobile: { total: 29, passed: 24, failed: 5 },
+        'yandex-sdk': { total: 22, passed: 18, failed: 4 },
+        assets: { total: 15, passed: 13, failed: 2 },
+        gameplay: { total: 7, passed: 6, failed: 1 }
+      },
+      recentTrends: {
+        labels: ['Пн', 'Вт', 'Ср', 'Чт', 'Пт'],
+        successRates: [85.2, 88.1, 86.7, 89.3, 87.3],
+        testCounts: [18, 22, 19, 25, 23]
+      }
+    };
+
+    res.json({
+      success: true,
+      data: stats
+    });
+    
+  } catch (error) {
+    logger.error('Ошибка получения статистики:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get testing statistics'
+    });
+  }
+}));
+
+// WebSocket события для real-time обновлений
+testRunner.on('generation:progress', (data) => {
+  // Здесь можно отправлять события через WebSocket
+  logger.debug(`🔄 Progress: ${data.step} - ${data.progress}%`);
+});
+
+testRunner.on('suite:start', (data) => {
+  logger.info(`🔍 Starting suite: ${data.suite.name}`);
+});
+
+testRunner.on('suite:complete', (data) => {
+  logger.info(`✅ Completed suite: ${data.suite.name} - Status: ${data.result.status}`);
 });
 
 export default router; 

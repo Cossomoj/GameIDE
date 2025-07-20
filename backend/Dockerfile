@@ -45,5 +45,5 @@ EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:3001/api/health || exit 1
 
-# Временно запускаем простой сервер для тестирования
-CMD ["ts-node", "src/simple-server.ts"] 
+# Возвращаемся к debug серверу для диагностики блокировки
+CMD ["ts-node", "src/debug-server.ts"] 

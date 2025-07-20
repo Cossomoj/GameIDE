@@ -238,6 +238,109 @@ export class WebSocketService {
         });
       }
     });
+
+    // Генерация вариантов с кастомным промптом
+    socket.on('interactive:generate:custom', async (data: {
+      gameId: string;
+      stepId: string;
+      customPrompt: string;
+      count?: number;
+    }) => {
+      try {
+        // Отправляем начало генерации
+        socket.emit('interactive:variants:generating', {
+          gameId: data.gameId,
+          stepId: data.stepId,
+          message: `Генерируем варианты с учетом ваших требований: "${data.customPrompt}"`,
+          isCustom: true
+        });
+
+        const response = await this.interactiveService.generateVariantsWithCustomPrompt(
+          data.gameId,
+          data.stepId,
+          data.customPrompt,
+          data.count || 3
+        );
+
+        socket.emit('interactive:variants:generated', {
+          gameId: data.gameId,
+          stepId: data.stepId,
+          variants: response.variants,
+          isCustomGeneration: true,
+          customPrompt: data.customPrompt
+        });
+      } catch (error) {
+        socket.emit('interactive:error', {
+          gameId: data.gameId,
+          stepId: data.stepId,
+          message: error instanceof Error ? error.message : 'Ошибка генерации кастомных вариантов',
+          code: 'CUSTOM_VARIANT_GENERATION_ERROR'
+        });
+      }
+    });
+
+    // Получение детального прогресса
+    socket.on('interactive:get:progress', (data: { gameId: string }) => {
+      try {
+        const progress = this.interactiveService.getGenerationProgress(data.gameId);
+        
+        if (progress) {
+          socket.emit('interactive:progress:update', {
+            gameId: data.gameId,
+            ...progress
+          });
+        } else {
+          socket.emit('interactive:error', {
+            gameId: data.gameId,
+            message: 'Генерация не найдена',
+            code: 'GENERATION_NOT_FOUND'
+          });
+        }
+      } catch (error) {
+        socket.emit('interactive:error', {
+          gameId: data.gameId,
+          message: error instanceof Error ? error.message : 'Ошибка получения прогресса',
+          code: 'PROGRESS_ERROR'
+        });
+      }
+    });
+
+    // Генерация превью для варианта
+    socket.on('interactive:generate:preview', async (data: {
+      gameId: string;
+      stepId: string;
+      variantId: string;
+    }) => {
+      try {
+        socket.emit('interactive:preview:generating', {
+          gameId: data.gameId,
+          stepId: data.stepId,
+          variantId: data.variantId,
+          message: 'Создаем превью...'
+        });
+
+        const preview = await this.interactiveService.generateVariantPreview(
+          data.gameId,
+          data.stepId,
+          data.variantId
+        );
+
+        socket.emit('interactive:preview:generated', {
+          gameId: data.gameId,
+          stepId: data.stepId,
+          variantId: data.variantId,
+          preview
+        });
+      } catch (error) {
+        socket.emit('interactive:error', {
+          gameId: data.gameId,
+          stepId: data.stepId,
+          variantId: data.variantId,
+          message: error instanceof Error ? error.message : 'Ошибка генерации превью',
+          code: 'PREVIEW_GENERATION_ERROR'
+        });
+      }
+    });
   }
 
   private handleDisconnection(socket: Socket): void {

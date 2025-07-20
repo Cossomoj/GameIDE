@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { gamesApi } from '@/services/api';
+import { gameAPI } from '@/services/api';
 import { Game, CreateGameRequest } from '@/types';
 import toast from 'react-hot-toast';
 
@@ -11,7 +11,7 @@ export const useGames = (params?: {
 }) => {
   return useQuery({
     queryKey: ['games', params],
-    queryFn: () => gamesApi.getAll(params),
+    queryFn: () => gameAPI.getAll(),
     staleTime: 10000, // 10 секунд
     refetchInterval: 30000, // Обновляем каждые 30 секунд
   });
@@ -21,7 +21,7 @@ export const useGames = (params?: {
 export const useGame = (id: string | undefined) => {
   return useQuery({
     queryKey: ['game', id],
-    queryFn: () => gamesApi.getById(id!),
+    queryFn: () => gameAPI.getById(id!),
     enabled: !!id,
     staleTime: 5000, // 5 секунд
     refetchInterval: (data) => {
@@ -50,7 +50,10 @@ export const useCreateGame = () => {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (gameData: CreateGameRequest) => gamesApi.create(gameData),
+    mutationFn: async (gameData: CreateGameRequest) => {
+      const response = await gameAPI.create(gameData);
+      return response.game; // Возвращаем объект игры из ответа
+    },
     onSuccess: (game: Game) => {
       // Обновляем кеш списка игр
       queryClient.invalidateQueries({ queryKey: ['games'] });

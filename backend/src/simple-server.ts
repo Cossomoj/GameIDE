@@ -1,12 +1,30 @@
 import express from 'express'
 import cors from 'cors'
+import dotenv from 'dotenv'
 import { envWriter } from './utils/envWriter'
+import { InteractiveGameGenerationService } from './services/interactiveGameGeneration'
+
+// Загружаем переменные из .env файла в корне
+dotenv.config({ path: '/app/.env' })
 
 const app = express()
 const PORT = 3001
 
+// Инициализация сервисов
+const interactiveGameService = new InteractiveGameGenerationService()
+
+// Обновляем путь к .env файлу в envWriter
+envWriter.envPath = '/app/.env'
+
 // Middleware
-app.use(cors())
+app.use(cors({
+  origin: [
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://frontend:3000'
+  ],
+  credentials: true
+}))
 app.use(express.json())
 
 // Логирование запросов
@@ -602,6 +620,180 @@ app.get('/api/games', (req, res) => {
       }
     ]
   })
+})
+
+// Interactive generation endpoints
+app.post('/api/interactive/start', async (req, res) => {
+  try {
+    console.log('🎮 Запуск интерактивной генерации:', req.body)
+    
+    const { title, description, genre, userId, quality } = req.body
+    
+    if (!title || !description) {
+      return res.status(400).json({
+        success: false,
+        error: 'Необходимы title и description'
+      })
+    }
+
+    // Генерируем userId если не предоставлен
+    const effectiveUserId = userId || `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+    const session = await interactiveGameService.startInteractiveGeneration({
+      title,
+      description,
+      genre: genre || 'adventure',
+      userId: effectiveUserId,
+      quality: quality || 'balanced'
+    })
+
+    const currentStep = session.steps[session.currentStep]
+
+    res.json({
+      success: true,
+      data: {
+        gameId: session.gameId,
+        currentStep: session.currentStep,
+        totalSteps: session.totalSteps,
+        step: {
+          stepId: currentStep.stepId,
+          name: currentStep.name,
+          description: currentStep.description,
+          variants: currentStep.variants.map(v => ({
+            id: v.id,
+            title: v.title,
+            description: v.description
+          }))
+        }
+      },
+      message: 'Интерактивная генерация начата! Выберите один из вариантов.'
+    })
+  } catch (error) {
+    console.error('Ошибка запуска интерактивной генерации:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Не удалось запустить интерактивную генерацию',
+      details: error.message
+    })
+  }
+})
+
+app.get('/api/interactive/:gameId/state', async (req, res) => {
+  try {
+    const { gameId } = req.params
+    console.log('📊 Запрос состояния интерактивной генерации:', gameId)
+    
+    const session = await interactiveGameService.getGameState(gameId)
+    
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        error: 'Сессия не найдена'
+      })
+    }
+
+    const currentStep = session.steps[session.currentStep]
+    
+    res.json({
+      success: true,
+      data: {
+        gameId: session.gameId,
+        currentStep: session.currentStep,
+        totalSteps: session.totalSteps,
+        step: {
+          stepId: currentStep.stepId,
+          name: currentStep.name,
+          description: currentStep.description,
+          variants: currentStep.variants.map(v => ({
+            id: v.id,
+            title: v.title,
+            description: v.description
+          }))
+        },
+        isActive: session.isActive,
+        isPaused: session.isPaused,
+        completedSteps: session.completedSteps,
+        startedAt: session.startedAt.toISOString(),
+        lastActivityAt: session.lastActivityAt.toISOString()
+      }
+    })
+  } catch (error) {
+    console.error('Ошибка получения состояния:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Не удалось получить состояние сессии',
+      details: error.message
+    })
+  }
+})
+
+app.post('/api/interactive/:gameId/step/:stepId/select', async (req, res) => {
+  try {
+    const { gameId, stepId } = req.params
+    const { variantId } = req.body
+    
+    console.log(`✅ Выбран вариант ${variantId} для этапа ${stepId} игры ${gameId}`)
+    
+    const result = await interactiveGameService.selectVariant(gameId, stepId, variantId)
+    
+    const responseData: any = {
+      selectedVariant: variantId
+    }
+
+    if (result.nextStep) {
+      responseData.nextStep = {
+        stepId: result.nextStep.stepId,
+        name: result.nextStep.name,
+        description: result.nextStep.description,
+        variants: result.nextStep.variants.map(v => ({
+          id: v.id,
+          title: v.title,
+          description: v.description
+        }))
+      }
+    }
+    
+    res.json({
+      success: result.success,
+      message: result.message,
+      data: responseData
+    })
+  } catch (error) {
+    console.error('Ошибка выбора варианта:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Не удалось выбрать вариант',
+      details: error.message
+    })
+  }
+})
+
+app.post('/api/interactive/:gameId/complete', async (req, res) => {
+  try {
+    const { gameId } = req.params
+    console.log('🎉 Завершение интерактивной генерации:', gameId)
+    
+    const result = await interactiveGameService.completeGeneration(gameId)
+    
+    res.json({
+      success: result.success,
+      data: {
+        gameId,
+        finalGamePath: result.finalGameData.gamePath,
+        downloadUrl: result.finalGameData.downloadUrl,
+        assets: result.finalGameData.assets,
+        choices: result.finalGameData.choices
+      },
+      message: result.message
+    })
+  } catch (error) {
+    console.error('Ошибка завершения генерации:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Не удалось завершить генерацию',
+      details: error.message
+    })
+  }
 })
 
 // Stats endpoint

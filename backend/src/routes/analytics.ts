@@ -545,4 +545,84 @@ router.get('/health', async (req, res) => {
   }
 });
 
+// Endpoint для получения событий от Yandex SDK
+router.post('/events', async (req, res) => {
+  try {
+    const { events, session, player } = req.body;
+
+    if (!events || !Array.isArray(events)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Events array is required'
+      });
+    }
+
+    const processedEvents = [];
+
+    for (const event of events) {
+      try {
+        const eventId = analyticsService.trackEvent({
+          sessionId: session?.id,
+          userId: player?.id || event.userId,
+          eventType: 'game',
+          eventName: event.name,
+          properties: {
+            ...event,
+            source: 'yandex_sdk',
+            sessionDuration: session?.duration,
+            platform: session?.platform,
+            language: session?.language,
+            playerName: player?.name,
+            playerMode: player?.mode
+          },
+          timestamp: new Date(event.timestamp),
+          userAgent: req.headers['user-agent'],
+          ip: req.ip
+        });
+
+        processedEvents.push({ eventId, originalEvent: event.name });
+      } catch (eventError) {
+        logger.warn('Failed to process individual event:', { event, error: eventError });
+      }
+    }
+
+    // Обновляем статистику сессии если предоставлена
+    if (session?.id) {
+      try {
+        analyticsService.updateSession(session.id, {
+          duration: session.duration,
+          platform: session.platform,
+          language: session.language,
+          events: events.length
+        });
+      } catch (sessionError) {
+        logger.warn('Failed to update session:', sessionError);
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        processedEvents: processedEvents.length,
+        totalEvents: events.length,
+        sessionId: session?.id,
+        message: 'Analytics data processed successfully'
+      }
+    });
+
+    logger.info(`Processed ${processedEvents.length}/${events.length} events from Yandex SDK`, {
+      sessionId: session?.id,
+      userId: player?.id,
+      platform: session?.platform
+    });
+
+  } catch (error) {
+    logger.error('Error processing Yandex SDK analytics:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to process analytics data'
+    });
+  }
+});
+
 export default router; 

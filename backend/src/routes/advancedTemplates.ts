@@ -4,6 +4,8 @@ import { logger } from '../services/logger';
 import { analyticsService } from '../services/analytics';
 import multer from 'multer';
 import { join } from 'path';
+import fs from 'fs/promises';
+import archiver from 'archiver';
 
 const router = Router();
 
@@ -648,37 +650,61 @@ router.get('/recommendations', async (req: Request, res: Response) => {
 
 // ЭКСПОРТ И ИМПОРТ
 
-// POST /api/advanced-templates/export - экспорт шаблона
-router.post('/export', async (req: Request, res: Response) => {
+// GET /api/advanced-templates/:templateId/export - Экспорт шаблона
+router.get('/:templateId/export', [
+  param('templateId').isUUID(),
+  query('format').optional().isIn(['json', 'zip'])
+], async (req: Request, res: Response) => {
   try {
-    const { templateId, format } = req.body;
-
-    if (!templateId) {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
       return res.status(400).json({
         success: false,
-        error: 'Требуется templateId'
+        error: 'Validation failed',
+        details: errors.array()
       });
     }
 
-    const template = advancedTemplatesService.getTemplate(templateId);
+    const { templateId } = req.params;
+    const { format } = req.query as { format?: 'json' | 'zip' };
+
+    const template = await advancedTemplatesService.getTemplateById(templateId);
     if (!template) {
       return res.status(404).json({
         success: false,
-        error: 'Шаблон не найден'
+        error: 'Template not found'
       });
     }
 
     let exportData;
+    let contentType;
+    let fileName;
+
     switch (format) {
       case 'json':
         exportData = JSON.stringify(template, null, 2);
+        contentType = 'application/json';
+        fileName = `template-${template.name.replace(/[^a-zA-Z0-9]/g, '_')}.json`;
         break;
+        
       case 'zip':
-        // TODO: Создать ZIP архив с файлами
-        exportData = 'ZIP export not implemented yet';
-        break;
+        // Создаем ZIP архив с файлами шаблона
+        const archivePath = await createTemplateZip(template);
+        
+        // Читаем созданный архив
+        const archiveBuffer = await fs.readFile(archivePath);
+        
+        // Очищаем временный файл
+        await fs.unlink(archivePath).catch(() => {});
+        
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="template-${template.name.replace(/[^a-zA-Z0-9]/g, '_')}.zip"`);
+        return res.send(archiveBuffer);
+        
       default:
         exportData = JSON.stringify(template, null, 2);
+        contentType = 'application/json';
+        fileName = `template-${template.name.replace(/[^a-zA-Z0-9]/g, '_')}.json`;
     }
 
     await analyticsService.trackEvent('template_exported', {
@@ -686,22 +712,107 @@ router.post('/export', async (req: Request, res: Response) => {
       format: format || 'json'
     });
 
-    res.json({
-      success: true,
-      data: {
-        template,
-        exportData,
-        format: format || 'json'
-      }
-    });
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.send(exportData);
+    
   } catch (error) {
     logger.error('Error exporting template:', error);
     res.status(500).json({
       success: false,
-      error: 'Ошибка при экспорте шаблона'
+      error: 'Failed to export template'
     });
   }
 });
+
+// Функция создания ZIP архива шаблона
+async function createTemplateZip(template: any): Promise<string> {
+  const tempDir = join(process.cwd(), 'temp');
+  await fs.mkdir(tempDir, { recursive: true });
+  
+  const archivePath = join(tempDir, `template-${template.id}.zip`);
+  
+  return new Promise<string>((resolve, reject) => {
+    const output = require('fs').createWriteStream(archivePath);
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    
+    output.on('close', () => {
+      logger.info(`✅ Архив шаблона создан: ${archivePath} (${archive.pointer()} bytes)`);
+      resolve(archivePath);
+    });
+    
+    archive.on('error', reject);
+    
+    archive.pipe(output);
+    
+    // Добавляем основной файл шаблона
+    archive.append(JSON.stringify(template, null, 2), { name: 'template.json' });
+    
+    // Добавляем README с описанием
+    const readme = generateTemplateReadme(template);
+    archive.append(readme, { name: 'README.md' });
+    
+    // Если есть файлы в шаблоне, добавляем их
+    if (template.files && Array.isArray(template.files)) {
+      template.files.forEach((file: any, index: number) => {
+        const fileName = file.name || `file${index + 1}.${file.type || 'txt'}`;
+        const fileContent = file.content || `// ${file.description || 'Template file'}`;
+        archive.append(fileContent, { name: `files/${fileName}` });
+      });
+    }
+    
+    // Добавляем конфигурационные файлы если есть
+    if (template.config) {
+      archive.append(JSON.stringify(template.config, null, 2), { name: 'config.json' });
+    }
+    
+    // Добавляем примеры использования
+    if (template.examples) {
+      template.examples.forEach((example: any, index: number) => {
+        const exampleContent = typeof example === 'string' ? example : JSON.stringify(example, null, 2);
+        archive.append(exampleContent, { name: `examples/example${index + 1}.json` });
+      });
+    }
+    
+    archive.finalize();
+  });
+}
+
+// Генерация README для шаблона
+function generateTemplateReadme(template: any): string {
+  return `# ${template.name}
+
+${template.description || 'Шаблон для создания игр'}
+
+## Информация о шаблоне
+
+- **Версия**: ${template.version || '1.0.0'}
+- **Категория**: ${template.category || 'Общая'}
+- **Теги**: ${template.tags ? template.tags.join(', ') : 'Не указаны'}
+- **Создан**: ${template.createdAt || 'Неизвестно'}
+
+## Файлы
+
+${template.files ? template.files.map((file: any, index: number) => 
+  `- \`${file.name || `file${index + 1}`}\` - ${file.description || 'Файл шаблона'}`
+).join('\n') : 'Файлы отсутствуют'}
+
+## Использование
+
+1. Распакуйте архив
+2. Откройте \`template.json\` для просмотра конфигурации
+3. Изучите файлы в папке \`files/\`
+4. При наличии - посмотрите примеры в папке \`examples/\`
+
+## Примечания
+
+${template.notes || 'Дополнительные примечания отсутствуют'}
+
+---
+
+Сгенерировано GameIDE Advanced Templates System
+`;
+}
 
 // POST /api/advanced-templates/import - импорт шаблона
 router.post('/import', upload.single('file'), async (req: Request, res: Response) => {
@@ -717,14 +828,22 @@ router.post('/import', upload.single('file'), async (req: Request, res: Response
     }
 
     let templateData;
-    try {
-      const fileContent = file.buffer.toString('utf8');
-      templateData = JSON.parse(fileContent);
-    } catch (error) {
-      return res.status(400).json({
-        success: false,
-        error: 'Неверный формат файла'
-      });
+    
+    // Проверяем тип файла
+    if (file.mimetype === 'application/zip' || file.originalname?.endsWith('.zip')) {
+      // Импорт из ZIP архива
+      templateData = await importTemplateFromZip(file.buffer);
+    } else {
+      // Импорт из JSON файла
+      try {
+        const fileContent = file.buffer.toString('utf8');
+        templateData = JSON.parse(fileContent);
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          error: 'Неверный формат файла'
+        });
+      }
     }
 
     // Очищаем ID чтобы создать новый шаблон
@@ -737,7 +856,7 @@ router.post('/import', upload.single('file'), async (req: Request, res: Response
     await analyticsService.trackEvent('template_imported', {
       templateId: template.id,
       originalName: templateData.name,
-      format: format || 'json'
+      format: format || (file.mimetype === 'application/zip' ? 'zip' : 'json')
     });
 
     res.json({
@@ -752,6 +871,131 @@ router.post('/import', upload.single('file'), async (req: Request, res: Response
     });
   }
 });
+
+// Функция импорта шаблона из ZIP архива
+async function importTemplateFromZip(zipBuffer: Buffer): Promise<any> {
+  const yauzl = require('yauzl');
+  const path = require('path');
+  
+  return new Promise((resolve, reject) => {
+    yauzl.fromBuffer(zipBuffer, { lazyEntries: true }, (err: any, zipfile: any) => {
+      if (err) {
+        reject(new Error('Ошибка чтения ZIP архива'));
+        return;
+      }
+
+      let templateData: any = null;
+      const files: any[] = [];
+      const examples: any[] = [];
+      let config: any = null;
+      let processedEntries = 0;
+      let totalEntries = 0;
+
+      // Подсчитываем общее количество файлов
+      zipfile.on('entry', () => totalEntries++);
+      zipfile.readEntry();
+
+      // Перезапускаем для обработки
+      yauzl.fromBuffer(zipBuffer, { lazyEntries: true }, (err: any, zipfile: any) => {
+        if (err) {
+          reject(new Error('Ошибка повторного чтения ZIP архива'));
+          return;
+        }
+
+        zipfile.on('entry', (entry: any) => {
+          if (/\/$/.test(entry.fileName)) {
+            // Это папка
+            zipfile.readEntry();
+            return;
+          }
+
+          zipfile.openReadStream(entry, (err: any, readStream: any) => {
+            if (err) {
+              reject(err);
+              return;
+            }
+
+            const chunks: Buffer[] = [];
+            readStream.on('data', (chunk: Buffer) => chunks.push(chunk));
+            readStream.on('end', () => {
+              const content = Buffer.concat(chunks).toString('utf8');
+              
+              // Обрабатываем файлы по имени
+              const fileName = path.basename(entry.fileName);
+              const dirName = path.dirname(entry.fileName);
+
+              if (fileName === 'template.json') {
+                try {
+                  templateData = JSON.parse(content);
+                } catch (error) {
+                  reject(new Error('Неверный формат template.json'));
+                  return;
+                }
+              } else if (fileName === 'config.json') {
+                try {
+                  config = JSON.parse(content);
+                } catch (error) {
+                  logger.warn('Неверный формат config.json, пропускаем');
+                }
+              } else if (dirName.includes('files')) {
+                files.push({
+                  name: fileName,
+                  content: content,
+                  type: path.extname(fileName).slice(1) || 'txt',
+                  description: `Импортированный файл: ${fileName}`
+                });
+              } else if (dirName.includes('examples')) {
+                try {
+                  const exampleData = JSON.parse(content);
+                  examples.push(exampleData);
+                } catch (error) {
+                  // Если не JSON, добавляем как текст
+                  examples.push({
+                    name: fileName,
+                    content: content
+                  });
+                }
+              }
+
+              processedEntries++;
+              
+              // Когда все файлы обработаны
+              if (processedEntries === totalEntries) {
+                if (!templateData) {
+                  reject(new Error('template.json не найден в архиве'));
+                  return;
+                }
+
+                // Дополняем templateData импортированными данными
+                if (files.length > 0) {
+                  templateData.files = files;
+                }
+                if (examples.length > 0) {
+                  templateData.examples = examples;
+                }
+                if (config) {
+                  templateData.config = { ...templateData.config, ...config };
+                }
+
+                resolve(templateData);
+              } else {
+                zipfile.readEntry();
+              }
+            });
+          });
+        });
+
+        zipfile.on('end', () => {
+          if (processedEntries === 0) {
+            reject(new Error('Архив пуст'));
+          }
+        });
+
+        zipfile.readEntry();
+      });
+    });
+  });
+}
 
 // ВАЛИДАЦИЯ
 

@@ -7,10 +7,10 @@ dotenv.config();
 export const config = {
   // Серверные настройки
   server: {
-    port: parseInt(process.env.BACKEND_PORT || '3000', 10),
+    port: parseInt(process.env.PORT || process.env.BACKEND_PORT || '3001', 10),
     host: process.env.HOST || '0.0.0.0',
     env: process.env.NODE_ENV || 'development',
-    corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+    corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:3000',
   },
 
   // База данных
@@ -99,7 +99,7 @@ export const config = {
   websocket: {
     path: '/ws',
     cors: {
-      origin: process.env.CORS_ORIGIN || 'http://localhost:3001',
+      origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
       methods: ['GET', 'POST'],
     },
   },

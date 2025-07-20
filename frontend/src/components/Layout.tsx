@@ -54,9 +54,13 @@ const Layout = ({ children }: LayoutProps) => {
     { name: 'Облачные сохранения', href: '/cloud-save', icon: '☁️' },
     { name: 'Турниры', href: '/tournaments', icon: '🏆' },
     { name: 'Тестирование', href: '/testing', icon: '🧪' },
+    { name: 'A/B Тестирование', href: '/ab-testing', icon: '⚗️' },
+    { name: 'Расширенная локализация', href: '/enhanced-localization', icon: '🌍' },
     { name: 'Мультиязычная генерация', href: '/multi-language', icon: '🌐' },
     { name: 'Расширенные шаблоны', href: '/advanced-templates', icon: '🧩' },
     { name: 'Безопасность', href: '/security', icon: '🔒' },
+    { name: 'AI Health Monitoring', href: '/ai-health-monitoring', icon: '💊' },
+    { name: 'Device Testing', href: '/device-testing', icon: '📱' },
   ]
 
   const isActive = (href: string) => {

@@ -27,7 +27,10 @@ export interface InteractiveStep {
   stepId: string;
   name: string;
   description: string;
-  type: 'character' | 'mechanics' | 'levels' | 'graphics' | 'sounds' | 'ui' | 'story';
+  type: 'character' | 'mechanics' | 'levels' | 'graphics' | 'sounds' | 'ui' | 'story' | 
+        'monetization' | 'multiplayer' | 'analytics' | 'localization' | 'accessibility' | 
+        'performance' | 'tutorial' | 'achievements' | 'inventory' | 'dialogue' | 
+        'cutscenes' | 'effects' | 'ai_behavior' | 'world_building' | 'economy';
   variants: GenerationVariant[];
   selectedVariant?: string; // ID выбранного варианта
   customPrompt?: string; // Пользовательский промпт для данного этапа
@@ -98,6 +101,182 @@ export interface UIVariant extends GenerationVariant {
     colorScheme: string;
     components: string[];
     mockupUrl?: string;
+  };
+}
+
+export interface StoryVariant extends GenerationVariant {
+  content: {
+    plot: string;
+    setting: string;
+    characters: string[];
+    narrative: string;
+    themes: string[];
+    tone: string;
+  };
+}
+
+export interface MonetizationVariant extends GenerationVariant {
+  content: {
+    strategy: string;
+    adPlacements: string[];
+    iapItems: { name: string; price: string; type: string }[];
+    revenueModel: string;
+    targetAudience: string;
+    expectedRevenue: string;
+  };
+}
+
+export interface MultiplayerVariant extends GenerationVariant {
+  content: {
+    gameMode: string;
+    matchmaking: string;
+    playerCount: number;
+    communication: string[];
+    competitiveFeatures: string[];
+    socialIntegration: string[];
+  };
+}
+
+export interface AnalyticsVariant extends GenerationVariant {
+  content: {
+    trackingEvents: string[];
+    kpis: string[];
+    segments: string[];
+    funnels: string[];
+    privacyLevel: string;
+    reportingSchedule: string;
+  };
+}
+
+export interface LocalizationVariant extends GenerationVariant {
+  content: {
+    targetLanguages: string[];
+    contentStrategy: string;
+    culturalAdaptations: string[];
+    voiceoverPlan: string;
+    textExpansion: number;
+    localMarkets: string[];
+  };
+}
+
+export interface AccessibilityVariant extends GenerationVariant {
+  content: {
+    visualFeatures: string[];
+    audioFeatures: string[];
+    motorFeatures: string[];
+    cognitiveFeatures: string[];
+    guidelines: string[];
+    certificationTarget: string;
+  };
+}
+
+export interface PerformanceVariant extends GenerationVariant {
+  content: {
+    optimizationTargets: string[];
+    deviceSupport: string[];
+    framerate: number;
+    memoryUsage: string;
+    loadingStrategy: string;
+    qualitySettings: string[];
+  };
+}
+
+export interface TutorialVariant extends GenerationVariant {
+  content: {
+    approach: string;
+    steps: { title: string; description: string; type: string }[];
+    duration: string;
+    interactivity: string;
+    progressTracking: boolean;
+    adaptiveFeatures: string[];
+  };
+}
+
+export interface AchievementsVariant extends GenerationVariant {
+  content: {
+    categories: string[];
+    achievements: { name: string; description: string; reward: string; difficulty: string }[];
+    progressSystem: string;
+    notifications: string;
+    socialFeatures: string[];
+    gamification: string[];
+  };
+}
+
+export interface InventoryVariant extends GenerationVariant {
+  content: {
+    systemDesign: string;
+    itemCategories: string[];
+    capacity: string;
+    organization: string;
+    interactions: string[];
+    visualDesign: string;
+  };
+}
+
+export interface DialogueVariant extends GenerationVariant {
+  content: {
+    style: string;
+    characters: { name: string; personality: string; voice: string }[];
+    conversationFlow: string;
+    choices: string[];
+    emotionalSystem: string;
+    localizationNotes: string[];
+  };
+}
+
+export interface CutscenesVariant extends GenerationVariant {
+  content: {
+    style: string;
+    scenes: { name: string; description: string; duration: string; purpose: string }[];
+    transitions: string[];
+    interactivity: string;
+    production: string;
+    assets: string[];
+  };
+}
+
+export interface EffectsVariant extends GenerationVariant {
+  content: {
+    visualEffects: string[];
+    particleSystems: string[];
+    shaderEffects: string[];
+    audioEffects: string[];
+    performance: string;
+    customization: string[];
+  };
+}
+
+export interface AIBehaviorVariant extends GenerationVariant {
+  content: {
+    behaviorTrees: string[];
+    stateManagement: string;
+    decisionMaking: string;
+    learning: string;
+    interactions: string[];
+    difficulty: string;
+  };
+}
+
+export interface WorldBuildingVariant extends GenerationVariant {
+  content: {
+    worldConcept: string;
+    environments: string[];
+    lore: string;
+    geography: string;
+    culture: string;
+    history: string;
+  };
+}
+
+export interface EconomyVariant extends GenerationVariant {
+  content: {
+    currencySystem: string;
+    resources: string[];
+    trading: string;
+    pricing: string;
+    balance: string;
+    playerProgression: string;
   };
 }
 
@@ -242,6 +421,162 @@ export interface StepOptions {
     mobileOptimized: boolean;
     accessibility: boolean;
   };
+  story: {
+    narrativeStyle: 'linear' | 'branching' | 'open_world';
+    dialogueSystem: boolean;
+    cinematics: boolean;
+  };
+  monetization: {
+    model: 'free' | 'premium' | 'freemium' | 'subscription';
+    adPlacement: ('banner' | 'interstitial' | 'rewarded' | 'native')[];
+    iapStrategy: 'cosmetic' | 'gameplay' | 'convenience' | 'hybrid';
+  };
+  multiplayer: {
+    mode: 'local' | 'online' | 'hybrid';
+    maxPlayers: number;
+    competitiveFeatures: boolean;
+    socialFeatures: ('chat' | 'friends' | 'guilds' | 'leaderboards')[];
+  };
+  analytics: {
+    trackingLevel: 'basic' | 'detailed' | 'comprehensive';
+    gdprCompliant: boolean;
+    customEvents: string[];
+  };
+  localization: {
+    languages: string[];
+    contentTypes: ('text' | 'audio' | 'images')[];
+    rtlSupport: boolean;
+  };
+  accessibility: {
+    visualAids: ('colorblind' | 'high_contrast' | 'text_scaling')[];
+    audioAids: ('subtitles' | 'audio_descriptions' | 'sound_visualization')[];
+    motorAids: ('button_remapping' | 'hold_to_toggle' | 'simplified_controls')[];
+  };
+  performance: {
+    targetFPS: 30 | 60 | 120;
+    deviceTiers: ('low' | 'medium' | 'high')[];
+    optimizationLevel: 'basic' | 'moderate' | 'aggressive';
+  };
+  tutorial: {
+    style: 'interactive' | 'video' | 'text' | 'guided';
+    complexity: 'minimal' | 'comprehensive' | 'adaptive';
+    skippable: boolean;
+  };
+  achievements: {
+    types: ('progress' | 'skill' | 'exploration' | 'social' | 'collection')[];
+    notifications: boolean;
+    rewards: ('xp' | 'items' | 'cosmetics' | 'currency')[];
+  };
+  inventory: {
+    systemType: 'grid' | 'list' | 'category';
+    itemTypes: ('consumable' | 'equipment' | 'resource' | 'quest')[];
+    sorting: boolean;
+  };
+  dialogue: {
+    systemType: 'linear' | 'choice_based' | 'keyword';
+    voiceActing: boolean;
+    emotionSystem: boolean;
+  };
+  cutscenes: {
+    style: 'in_engine' | 'pre_rendered' | 'motion_graphics';
+    interactivity: 'none' | 'minimal' | 'full';
+    skippable: boolean;
+  };
+  effects: {
+    particleSystem: boolean;
+    shaderEffects: ('bloom' | 'blur' | 'distortion' | 'lighting')[];
+    screenEffects: ('shake' | 'flash' | 'slow_motion' | 'zoom')[];
+  };
+  ai_behavior: {
+    complexity: 'simple' | 'moderate' | 'advanced';
+    behaviorTypes: ('patrol' | 'chase' | 'flee' | 'collaborative')[];
+    learningSystem: boolean;
+  };
+  world_building: {
+    scope: 'single_scene' | 'multiple_areas' | 'open_world';
+    interactiveElements: ('doors' | 'switches' | 'collectibles' | 'secrets')[];
+    dynamicEvents: boolean;
+  };
+  economy: {
+    currencyTypes: ('single' | 'dual' | 'multiple')[];
+    inflation: 'none' | 'controlled' | 'dynamic';
+    tradingSystem: boolean;
+  };
 }
 
-export type StepType = keyof StepOptions; 
+export type StepType = keyof StepOptions;
+
+export interface InteractiveGameStep {
+  stepId: string;
+  name: string;
+  description: string;
+  type: 'concept' | 'character' | 'level' | 'graphics' | 'audio' | 'final';
+  variants: StepVariant[];
+  selectedVariant?: string;
+  aiPrompt?: string;
+  order: number;
+}
+
+export interface StepVariant {
+  id: string;
+  title: string;
+  description: string;
+  details?: any;
+  aiGenerated: boolean;
+  generatedAt: Date;
+  prompt?: string;
+  metadata?: {
+    complexity?: 'simple' | 'medium' | 'complex';
+    tags?: string[];
+    estimatedTime?: number;
+  };
+}
+
+export interface InteractiveGameSession {
+  gameId: string;
+  userId: string;
+  title: string;
+  description: string;
+  genre: string;
+  currentStep: number;
+  totalSteps: number;
+  steps: InteractiveGameStep[];
+  isActive: boolean;
+  isPaused: boolean;
+  completedSteps: number;
+  startedAt: Date;
+  lastActivityAt: Date;
+  completedAt?: Date;
+  finalGameData?: {
+    gamePath: string;
+    downloadUrl: string;
+    assets: string[];
+  };
+  configuration: {
+    quality: 'fast' | 'balanced' | 'high';
+    aiProvider: string;
+    enabledFeatures: string[];
+  };
+}
+
+export interface GenerateVariantsRequest {
+  stepType: InteractiveGameStep['type'];
+  count: number;
+  basePrompt: string;
+  gameContext: {
+    title: string;
+    description: string;
+    genre: string;
+    previousChoices: Array<{
+      stepId: string;
+      choice: string;
+    }>;
+  };
+  customPrompt?: string;
+}
+
+export interface GenerateVariantsResponse {
+  variants: StepVariant[];
+  generationTime: number;
+  tokensUsed: number;
+} 

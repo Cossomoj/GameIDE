@@ -112,10 +112,11 @@ export interface GenerationSettingsResponse {
   timestamp: string
 }
 
-// Базовый URL API (будет определяться автоматически)
-const API_BASE_URL = process.env.NODE_ENV === 'production' 
-  ? '/api' 
-  : 'http://localhost:3001/api'
+// Базовый URL API - всегда используем относительный путь для прокси
+const API_BASE_URL = '/api'
+
+console.log('🔗 API Base URL:', API_BASE_URL)
+console.log('🔧 Vite ENV Mode:', import.meta.env.MODE)
 
 class APIClient {
   private baseURL: string
@@ -131,6 +132,8 @@ class APIClient {
   ): Promise<T> {
     const url = `${this.baseURL}${endpoint}`
     
+    console.log(`🌐 API Request: ${options.method || 'GET'} ${url}`)
+    
     const config: RequestInit = {
       headers: {
         'Content-Type': 'application/json',
@@ -138,23 +141,29 @@ class APIClient {
       },
       ...options,
     }
-
+    
     try {
-      console.log(`🌐 API Request: ${options.method || 'GET'} ${url}`)
-      
       const response = await fetch(url, config)
+      
+      console.log(`📡 API Response: ${response.status} ${response.statusText}`)
       
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}))
+        console.error(`❌ API Error: ${response.status} ${response.statusText}`, errorData)
         throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`)
       }
 
       const data = await response.json()
-      console.log(`✅ API Response:`, data)
+      console.log(`✅ API Success:`, data)
       
       return data
     } catch (error) {
-      console.error(`❌ API Error for ${url}:`, error)
+      console.error(`💥 API Request Failed:`, {
+        url,
+        method: options.method || 'GET',
+        error: error.message,
+        baseURL: this.baseURL
+      })
       
       // Показываем пользователю уведомление об ошибке
       if (error instanceof Error) {
@@ -197,6 +206,119 @@ class APIClient {
   // Методы для AI сервисов
   async getAIStatus(): Promise<AIStatusResponse> {
     return this.request<AIStatusResponse>('/ai/status')
+  }
+
+  // Методы для интерактивной генерации
+  async startInteractiveGeneration(data: {
+    title: string;
+    description: string;
+    genre?: string;
+    userId?: string;
+    quality?: 'fast' | 'balanced' | 'high';
+  }): Promise<{
+    success: boolean;
+    data: {
+      gameId: string;
+      currentStep: number;
+      totalSteps: number;
+      step: {
+        stepId: string;
+        name: string;
+        description: string;
+        variants: Array<{
+          id: string;
+          title: string;
+          description: string;
+        }>;
+      };
+    };
+    message: string;
+  }> {
+    return this.request('/interactive/start', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  }
+
+  async getInteractiveState(gameId: string): Promise<{
+    success: boolean;
+    data: {
+      gameId: string;
+      currentStep: number;
+      totalSteps: number;
+      step: {
+        stepId: string;
+        name: string;
+        description: string;
+        variants: Array<{
+          id: string;
+          title: string;
+          description: string;
+        }>;
+      };
+      isActive: boolean;
+      isPaused: boolean;
+      completedSteps: number;
+      startedAt: string;
+      lastActivityAt: string;
+    };
+  }> {
+    return this.request(`/interactive/${gameId}/state`)
+  }
+
+  async generateStepVariants(gameId: string, stepId: string, count: number = 5, customPrompt?: string): Promise<{
+    success: boolean;
+    data: {
+      variants: any[];
+    };
+    message: string;
+  }> {
+    return this.request(`/interactive/${gameId}/step/${stepId}/variants`, {
+      method: 'POST',
+      body: JSON.stringify({ count, customPrompt }),
+    })
+  }
+
+  async selectVariant(gameId: string, stepId: string, variantId: string, customPrompt?: string): Promise<{
+    success: boolean;
+    message: string;
+    data: {
+      selectedVariant: string;
+      nextStep?: {
+        stepId: string;
+        name: string;
+        description: string;
+        variants: Array<{
+          id: string;
+          title: string;
+          description: string;
+        }>;
+      };
+    };
+  }> {
+    return this.request(`/interactive/${gameId}/step/${stepId}/select`, {
+      method: 'POST',
+      body: JSON.stringify({ variantId, customPrompt }),
+    })
+  }
+
+  async completeInteractiveGeneration(gameId: string): Promise<{
+    success: boolean;
+    data: {
+      gameId: string;
+      finalGamePath: string;
+      downloadUrl: string;
+      assets?: string[];
+      choices?: Array<{
+        step: string;
+        choice: string;
+      }>;
+    };
+    message: string;
+  }> {
+    return this.request(`/interactive/${gameId}/complete`, {
+      method: 'POST',
+    })
   }
 
   async updateAISettings(provider: string, apiKey: string, model: string): Promise<{
@@ -291,26 +413,7 @@ class APIClient {
     }>('/health')
   }
 
-  // Методы для интерактивной генерации
-  async startInteractiveGeneration(data: {
-    title: string
-    description: string
-    genre?: string
-    userId?: string
-  }): Promise<{
-    success: boolean
-    data: {
-      gameId: string
-      currentStep: number
-      totalSteps: number
-      step: any
-    }
-  }> {
-    return this.request<any>('/interactive/start', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    })
-  }
+
 
   // Методы для достижений
   async getAchievements(userId: string): Promise<{

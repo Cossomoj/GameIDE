@@ -41,19 +41,22 @@ const GameForm = () => {
       };
 
       if (generationMode === 'interactive') {
-        // Переходим к детальной конфигурации игры
-        message.success('Переходим к настройке параметров игры!');
+        // Запускаем интерактивную генерацию
+        const response = await api.startInteractiveGeneration({
+          title: gameData.title,
+          description: gameData.description,
+          genre: gameData.genre,
+          userId: 'user-001', // TODO: получать из контекста пользователя
+        });
         
-        // Сохраняем базовые данные в localStorage для использования после конфигурации
-        localStorage.setItem('baseGameData', JSON.stringify(gameData));
-        
-        navigate('/configure-game');
+        message.success('Интерактивная генерация начата! Теперь вы сможете выбирать варианты на каждом этапе.');
+        navigate(`/interactive/${response.data.gameId}`);
       } else {
         // Обычная автоматическая генерация
-        const response = await api.post('/games', gameData);
+        const response = await api.createGame(gameData);
         
         message.success('Игра поставлена в очередь на генерацию!');
-        navigate(`/games/${response.data.data.id}`);
+        navigate(`/games/${response.game.id}`);
       }
 
     } catch (error) {

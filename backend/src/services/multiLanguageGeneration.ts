@@ -2101,10 +2101,48 @@ Or with Maven:
   }
 
   private async createArchive(projectPath: string, format: 'zip' | 'tar.gz'): Promise<string> {
-    // В реальной реализации здесь была бы генерация архива
+    const fs = require('fs').promises;
+    const archiver = require('archiver');
+    const tar = require('tar');
+    const zlib = require('zlib');
+    
     const archivePath = `${projectPath}.${format}`;
-    // TODO: Implement actual archiving
-    return archivePath;
+    
+    try {
+      if (format === 'zip') {
+        // Создаем ZIP архив
+        await new Promise<void>((resolve, reject) => {
+          const output = require('fs').createWriteStream(archivePath);
+          const archive = archiver('zip', { zlib: { level: 9 } });
+          
+          output.on('close', resolve);
+          archive.on('error', reject);
+          
+          archive.pipe(output);
+          archive.directory(projectPath, false);
+          archive.finalize();
+        });
+      } else if (format === 'tar.gz') {
+        // Создаем TAR.GZ архив  
+        await tar.create(
+          {
+            gzip: true,
+            file: archivePath,
+            cwd: require('path').dirname(projectPath)
+          },
+          [require('path').basename(projectPath)]
+        );
+      }
+      
+      // Проверяем что архив создался
+      const stats = await fs.stat(archivePath);
+      this.logger.info(`✅ Архив создан: ${archivePath} (${stats.size} bytes)`);
+      
+      return archivePath;
+    } catch (error) {
+      this.logger.error('Ошибка создания архива', { error, projectPath, format });
+      throw new Error(`Не удалось создать архив: ${error.message}`);
+    }
   }
 
   private updateMetadata(generatedCode: GeneratedCode): void {

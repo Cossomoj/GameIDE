@@ -1,4 +1,7 @@
 import { GameDesign } from '@/types';
+import { LoggerService } from '@/services/logger';
+
+const logger = new LoggerService();
 
 export interface YandexSDKConfig {
   leaderboards?: boolean;
@@ -27,6 +30,10 @@ export interface AnalyticsConfig {
   metrikaId?: string;
   trackingEvents: string[];
   customEvents: { [key: string]: any };
+  serverEndpoint?: string;
+  eventQueue?: any[];
+  isOnline?: boolean;
+  sessionId?: string;
 }
 
 export interface AchievementConfig {
@@ -98,11 +105,11 @@ class YandexGamesSDK {
      */
     async init() {
         try {
-            console.log('🎮 Запуск расширенной Yandex Games SDK интеграции...');
+            this.log('info', '🎮 Запуск расширенной Yandex Games SDK интеграции...');
             
             // Проверяем доступность SDK
             if (typeof YaGames === 'undefined') {
-                console.warn('⚠️ Yandex Games SDK не найден, запуск fallback режима');
+                this.log('warn', '⚠️ Yandex Games SDK не найден, запуск fallback режима');
                 this.initializeFallback();
                 return;
             }
@@ -119,39 +126,59 @@ class YandexGamesSDK {
                 }
             });
 
-            console.log('✅ Yandex Games SDK инициализирован');
+            this.log('info', '✅ Yandex Games SDK инициализирован');
             
             // Получаем информацию об устройстве
             this.deviceInfo = this.ysdk.deviceInfo;
-            console.log('📱 Тип устройства:', this.deviceInfo.type);
+            this.log('info', \`📱 Тип устройства: \${this.deviceInfo.type}\`);
 
             // Инициализируем компоненты
             await this.initializePlayer();
             await this.initializeEnvironment();
             
-            ${config.leaderboards ? 'await this.initializeLeaderboards();' : ''}
-            ${config.payments ? 'await this.initializePayments();' : ''}
-            ${config.localization ? 'await this.initializeLocalization();' : ''}
-            ${config.analytics ? 'await this.initializeAnalytics();' : ''}
-            ${config.achievements ? 'await this.initializeAchievements();' : ''}
+            // Инициализируем сервисы по конфигурации
+            if (this.features.leaderboards) {
+                await this.initializeLeaderboards();
+            }
             
-            // Настраиваем адаптивность
+            if (this.features.payments) {
+                await this.initializePayments();
+            }
+            
+            if (this.features.localization) {
+                await this.localization.init(this.ysdk);
+            }
+            
+            if (this.features.analytics) {
+                await this.initializeAnalytics();
+            }
+            
+            if (this.features.achievements) {
+                await this.achievements.init(this.ysdk);
+            }
+            
+            // Настраиваем обработку паузы
+            this.setupGamePauseHandling();
+            
+            // Настраиваем производительность
+            await this.setupPerformanceOptimization();
+            
+            // Настраиваем адаптивный дизайн
             this.setupResponsiveDesign();
             
-            // Настраиваем оптимизацию производительности
-            this.setupPerformanceOptimization();
-            
             // Показываем sticky баннер если включен
-            ${config.advertising?.sticky ? 'this.showStickyBanner();' : ''}
+            if (this.features.advertising?.sticky) {
+                this.showStickyBanner();
+            }
 
             this.initialized = true;
-            console.log('🚀 Все сервисы Yandex Games готовы к работе');
+            this.log('info', '🚀 Все сервисы Yandex Games готовы к работе');
             
             // Сигнализируем о готовности
             this.gameReady();
 
         } catch (error) {
-            console.error('❌ Ошибка инициализации Yandex Games SDK:', error);
+            this.log('error', '❌ Ошибка инициализации Yandex Games SDK', { error });
             this.initializeFallback();
         }
     }
@@ -160,7 +187,7 @@ class YandexGamesSDK {
      * Fallback режим для разработки
      */
     initializeFallback() {
-        console.log('🔧 Запуск в режиме эмуляции');
+        this.log('info', '🔧 Запуск в режиме эмуляции');
         this.initialized = true;
         this.deviceInfo = {
             type: 'desktop',
@@ -197,9 +224,9 @@ class YandexGamesSDK {
             this.player = await this.ysdk.getPlayer({
                 scopes: false
             });
-            console.log('👤 Игрок инициализирован:', this.player.getName());
+            this.log('info', \`👤 Игрок инициализирован: \${this.player.getName()}\`);
         } catch (error) {
-            console.warn('⚠️ Ошибка инициализации игрока:', error);
+            this.log('warn', '⚠️ Ошибка инициализации игрока', { error });
         }
     }
 
@@ -209,14 +236,42 @@ class YandexGamesSDK {
     async initializeEnvironment() {
         try {
             this.environment = this.ysdk.environment;
-            console.log('🌍 Окружение:', {
+            this.log('info', '🌍 Окружение инициализировано', {
                 язык: this.environment.i18n.lang,
                 домен: this.environment.i18n.tld,
                 приложение: this.environment.app.id
             });
         } catch (error) {
-            console.warn('⚠️ Ошибка получения окружения:', error);
+            this.log('warn', '⚠️ Ошибка получения окружения', { error });
         }
+    }
+
+    /**
+     * Логирование с отправкой на сервер (в продакшене)
+     */
+    log(level, message, metadata = {}) {
+        // В развертке отправляем логи на сервер аналитики
+        if (window.location.hostname !== 'localhost') {
+            try {
+                fetch('/api/analytics/client-logs', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        level,
+                        message,
+                        metadata,
+                        timestamp: new Date().toISOString(),
+                        userAgent: navigator.userAgent,
+                        url: window.location.href
+                    })
+                });
+            } catch (error) {
+                console.warn('Failed to send log to server:', error);
+            }
+        }
+        
+        // Локальное логирование
+        console[level] || console.log(\`[\${level.toUpperCase()}]\`, message, metadata);
     }
 
     ${this.generateLocalizationMethods()}
@@ -258,11 +313,11 @@ class YandexGamesSDK {
         
         try {
             await this.player.setData(data, immediate);
-            console.log('💾 Данные игрока сохранены');
+            this.log('info', '💾 Данные игрока сохранены');
             this.trackEvent('player_data_saved', { size: JSON.stringify(data).length });
             return true;
         } catch (error) {
-            console.error('❌ Ошибка сохранения данных:', error);
+            this.log('error', '❌ Ошибка сохранения данных', { error });
             return false;
         }
     }
@@ -275,11 +330,11 @@ class YandexGamesSDK {
         
         try {
             const data = await this.player.getData(keys);
-            console.log('📂 Данные игрока загружены');
+            this.log('info', '📂 Данные игрока загружены');
             this.trackEvent('player_data_loaded');
             return data;
         } catch (error) {
-            console.error('❌ Ошибка загрузки данных:', error);
+            this.log('error', '❌ Ошибка загрузки данных', { error });
             return {};
         }
     }
@@ -303,7 +358,7 @@ class YandexGamesSDK {
             window.addEventListener('focus', () => this.resumeGame());
 
         } catch (error) {
-            console.warn('⚠️ Ошибка настройки паузы:', error);
+            this.log('warn', '⚠️ Ошибка настройки паузы', { error });
         }
     }
 
@@ -319,7 +374,7 @@ class YandexGamesSDK {
             window.gameInstance.pause();
         }
         
-        console.log('⏸️ Игра поставлена на паузу');
+        this.log('info', '⏸️ Игра поставлена на паузу');
     }
 
     /**
@@ -334,7 +389,7 @@ class YandexGamesSDK {
             window.gameInstance.resume();
         }
         
-        console.log('▶️ Игра возобновлена');
+        this.log('info', '▶️ Игра возобновлена');
     }
 
     /**
@@ -344,10 +399,10 @@ class YandexGamesSDK {
         try {
             if (this.ysdk && this.ysdk.features.LoadingAPI) {
                 this.ysdk.features.LoadingAPI.ready();
-                console.log('🎮 Игра готова к показу');
+                this.log('info', '🎮 Игра готова к показу');
             }
         } catch (error) {
-            console.warn('⚠️ Ошибка сигнала готовности:', error);
+            this.log('warn', '⚠️ Ошибка сигнала готовности', { error });
         }
     }
 
@@ -356,14 +411,14 @@ class YandexGamesSDK {
      */
     handleAdClose() {
         this.resumeGame();
-        console.log('📺 Реклама закрыта, игра возобновлена');
+        this.log('info', '📺 Реклама закрыта, игра возобновлена');
     }
 
     /**
      * Обработка ошибки рекламы
      */
     handleAdError(error) {
-        console.error('❌ Ошибка рекламы:', error);
+        this.log('error', '❌ Ошибка рекламы', { error });
         this.resumeGame();
         this.trackEvent('ad_error', { error: error.toString() });
     }
@@ -393,9 +448,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     async initializeLocalization() {
         try {
             await this.localization.init(this.ysdk);
-            console.log('🌐 Локализация инициализирована для языка:', this.localization.currentLanguage);
+            this.log('info', '🌐 Локализация инициализирована для языка:', this.localization.currentLanguage);
         } catch (error) {
-            console.error('❌ Ошибка инициализации локализации:', error);
+            this.log('error', '❌ Ошибка инициализации локализации', { error });
         }
     }
 
@@ -433,9 +488,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     async initializeLeaderboards() {
         try {
             this.leaderboards = await this.ysdk.getLeaderboards();
-            console.log('🏆 Лидерборды инициализированы');
+            this.log('info', '🏆 Лидерборды инициализированы');
         } catch (error) {
-            console.warn('⚠️ Ошибка инициализации лидербордов:', error);
+            this.log('warn', '⚠️ Ошибка инициализации лидербордов', { error });
         }
     }
 
@@ -444,7 +499,7 @@ document.addEventListener('DOMContentLoaded', async () => {
      */
     async submitScore(leaderboardName, score, metadata = {}) {
         if (!this.leaderboards) {
-            console.warn('⚠️ Лидерборды не инициализированы');
+            this.log('warn', '⚠️ Лидерборды не инициализированы');
             return false;
         }
 
@@ -461,11 +516,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 JSON.stringify(extraData)
             );
 
-            console.log('🎯 Результат отправлен:', { leaderboardName, score });
+            this.log('info', '🎯 Результат отправлен:', { leaderboardName, score });
             this.trackEvent('score_submitted', { leaderboardName, score });
             return true;
         } catch (error) {
-            console.error('❌ Ошибка отправки результата:', error);
+            this.log('error', '❌ Ошибка отправки результата', { error });
             return false;
         }
     }
@@ -492,7 +547,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             this.trackEvent('leaderboard_viewed', { leaderboard: name });
             return result;
         } catch (error) {
-            console.error('❌ Ошибка получения лидерборда:', error);
+            this.log('error', '❌ Ошибка получения лидерборда', { error });
             return null;
         }
     }
@@ -507,7 +562,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const entry = await this.leaderboards.getLeaderboardPlayerEntry(leaderboardName);
             return entry ? entry.rank : null;
         } catch (error) {
-            console.error('❌ Ошибка получения ранга:', error);
+            this.log('error', '❌ Ошибка получения ранга', { error });
             return null;
         }
     }`;
@@ -524,9 +579,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     async initializePayments() {
         try {
             this.payments = await this.ysdk.getPayments({ signed: true });
-            console.log('💳 Платежи инициализированы');
+            this.log('info', '💳 Платежи инициализированы');
         } catch (error) {
-            console.warn('⚠️ Ошибка инициализации платежей:', error);
+            this.log('warn', '⚠️ Ошибка инициализации платежей', { error });
         }
     }
 
@@ -538,11 +593,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         try {
             const catalog = await this.payments.getCatalog();
-            console.log('🛍️ Каталог загружен:', catalog.length, 'товаров');
+            this.log('info', '🛍️ Каталог загружен:', catalog.length, 'товаров');
             this.trackEvent('catalog_loaded', { itemCount: catalog.length });
             return catalog;
         } catch (error) {
-            console.error('❌ Ошибка загрузки каталога:', error);
+            this.log('error', '❌ Ошибка загрузки каталога', { error });
             return [];
         }
     }
@@ -552,7 +607,7 @@ document.addEventListener('DOMContentLoaded', async () => {
      */
     async purchaseItem(productId, developerPayload = {}) {
         if (!this.payments) {
-            console.warn('⚠️ Платежи не инициализированы');
+            this.log('warn', '⚠️ Платежи не инициализированы');
             return false;
         }
 
@@ -568,7 +623,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 })
             });
 
-            console.log('💰 Покупка совершена:', purchase);
+            this.log('info', '💰 Покупка совершена:', purchase);
             
             // Обработка покупки в игре
             if (window.gameInstance && window.gameInstance.processPurchase) {
@@ -585,7 +640,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             
             return purchase;
         } catch (error) {
-            console.error('❌ Ошибка покупки:', error);
+            this.log('error', '❌ Ошибка покупки', { productId, error: error.toString() });
             this.trackEvent('purchase_failed', { productId, error: error.toString() });
             return false;
         }
@@ -599,10 +654,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         try {
             const purchases = await this.payments.getPurchases();
-            console.log('🧾 Загружены покупки:', purchases.length);
+            this.log('info', '🧾 Загружены покупки:', purchases.length);
             return purchases;
         } catch (error) {
-            console.error('❌ Ошибка получения покупок:', error);
+            this.log('error', '❌ Ошибка получения покупок', { error });
             return [];
         }
     }`;
@@ -622,11 +677,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             this.ysdk.adv.showBannerAdv();
             this.adState.bannerVisible = true;
-            console.log('📰 Sticky-баннер показан');
+            this.log('info', '📰 Sticky-баннер показан');
             this.trackEvent('banner_shown', { type: 'sticky' });
             return true;
         } catch (error) {
-            console.error('❌ Ошибка показа баннера:', error);
+            this.log('error', '❌ Ошибка показа баннера', { error });
             return false;
         }
     }
@@ -640,11 +695,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             this.ysdk.adv.hideBannerAdv();
             this.adState.bannerVisible = false;
-            console.log('📰 Sticky-баннер скрыт');
+            this.log('info', '📰 Sticky-баннер скрыт');
             this.trackEvent('banner_hidden', { type: 'sticky' });
             return true;
         } catch (error) {
-            console.error('❌ Ошибка скрытия баннера:', error);
+            this.log('error', '❌ Ошибка скрытия баннера', { error });
             return false;
         }
     }
@@ -665,7 +720,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!this.ysdk) return false;
 
         if (!this.canShowInterstitial()) {
-            console.log('⏰ Межстраничная реклама в кулдауне');
+            this.log('info', '⏰ Межстраничная реклама в кулдауне');
             return false;
         }
 
@@ -676,17 +731,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             await this.ysdk.adv.showFullscreenAdv({
                 callbacks: {
                     onOpen: () => {
-                        console.log('📺 Межстраничная реклама открыта');
+                        this.log('info', '📺 Межстраничная реклама открыта');
                         this.trackEvent('interstitial_opened', { placement });
                     },
                     onClose: (wasShown) => {
-                        console.log('📺 Межстраничная реклама закрыта, показана:', wasShown);
+                        this.log('info', '📺 Межстраничная реклама закрыта, показана:', wasShown);
                         this.adState.lastInterstitial = Date.now();
                         this.resumeGame();
                         this.trackEvent('interstitial_closed', { placement, wasShown });
                     },
                     onError: (error) => {
-                        console.error('❌ Ошибка межстраничной рекламы:', error);
+                        this.log('error', '❌ Ошибка межстраничной рекламы', { placement, error: error.toString() });
                         this.resumeGame();
                         this.trackEvent('interstitial_error', { placement, error: error.toString() });
                     }
@@ -695,7 +750,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             return true;
         } catch (error) {
-            console.error('❌ Ошибка показа межстраничной рекламы:', error);
+            this.log('error', '❌ Ошибка показа межстраничной рекламы', { error });
             this.resumeGame();
             return false;
         }
@@ -714,11 +769,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             await this.ysdk.adv.showRewardedVideo({
                 callbacks: {
                     onOpen: () => {
-                        console.log('🎁 Реклама с вознаграждением открыта');
+                        this.log('info', '🎁 Реклама с вознаграждением открыта');
                         this.trackEvent('rewarded_opened', { placement });
                     },
                     onRewarded: () => {
-                        console.log('🎁 Награда получена');
+                        this.log('info', '🎁 Награда получена');
                         this.trackEvent('rewarded_completed', { placement });
                         
                         if (rewardCallback) {
@@ -728,12 +783,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                         }
                     },
                     onClose: () => {
-                        console.log('🎁 Реклама с вознаграждением закрыта');
+                        this.log('info', '🎁 Реклама с вознаграждением закрыта');
                         this.resumeGame();
                         this.trackEvent('rewarded_closed', { placement });
                     },
                     onError: (error) => {
-                        console.error('❌ Ошибка рекламы с вознаграждением:', error);
+                        this.log('error', '❌ Ошибка рекламы с вознаграждением', { placement, error: error.toString() });
                         this.resumeGame();
                         this.trackEvent('rewarded_error', { placement, error: error.toString() });
                     }
@@ -742,7 +797,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             return true;
         } catch (error) {
-            console.error('❌ Ошибка показа рекламы с вознаграждением:', error);
+            this.log('error', '❌ Ошибка показа рекламы с вознаграждением', { error });
             this.resumeGame();
             return false;
         }
@@ -758,7 +813,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const status = await this.ysdk.adv.getAdvStatus();
             return status;
         } catch (error) {
-            console.error('❌ Ошибка проверки статуса рекламы:', error);
+            this.log('error', '❌ Ошибка проверки статуса рекламы', { error });
             return { available: false };
         }
     }`;
@@ -775,9 +830,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     async initializeAchievements() {
         try {
             await this.achievements.init(this.player);
-            console.log('🏆 Система достижений инициализирована');
+            this.log('info', '🏆 Система достижений инициализирована');
         } catch (error) {
-            console.error('❌ Ошибка инициализации достижений:', error);
+            this.log('error', '❌ Ошибка инициализации достижений', { error });
         }
     }
 
@@ -820,15 +875,112 @@ document.addEventListener('DOMContentLoaded', async () => {
      */
     async initializeAnalytics() {
         try {
-            console.log('📊 Аналитика инициализирована');
-            this.trackEvent('game_started', {
+            // Инициализируем Yandex.Metrica если указан ID
+            if (this.ysdk && this.ysdk.metrica) {
+                this.analytics.metrikaId = this.ysdk.metrica.id;
+                await this.ysdk.metrica.init();
+                this.log('info', '📊 Yandex.Metrica инициализирована:', this.analytics.metrikaId);
+            }
+            
+            // Настраиваем отправку событий на сервер аналитики
+            this.analytics.serverEndpoint = '/api/analytics/events';
+            
+            // Создаем очередь для событий в случае оффлайна
+            this.analytics.eventQueue = [];
+            this.analytics.isOnline = navigator.onLine;
+            
+            // Отслеживаем статус сети
+            window.addEventListener('online', () => {
+                this.analytics.isOnline = true;
+                this.flushEventQueue();
+            });
+            
+            window.addEventListener('offline', () => {
+                this.analytics.isOnline = false;
+            });
+            
+            // Настраиваем автоматическую отправку метрик каждые 30 секунд
+            setInterval(() => {
+                this.sendAnalyticsData();
+            }, 30000);
+            
+            this.log('info', '📊 Расширенная аналитика инициализирована');
+            
+            // Отправляем первое событие
+            this.trackEvent('analytics_initialized', {
                 language: this.environment?.i18n?.lang,
                 platform: this.deviceInfo?.type,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                features: Object.keys(this.features).filter(key => this.features[key])
             });
         } catch (error) {
-            console.error('❌ Ошибка инициализации аналитики:', error);
+            this.log('error', '❌ Ошибка инициализации аналитики', { error });
         }
+    }
+
+    /**
+     * Отправка событий аналитики на сервер
+     */
+    async sendAnalyticsData() {
+        if (!this.analytics.isOnline || this.analytics.events.length === 0) {
+            return;
+        }
+
+        try {
+            const eventsToSend = [...this.analytics.events];
+            this.analytics.events = [];
+
+            const payload = {
+                events: eventsToSend,
+                session: {
+                    id: this.analytics.sessionId || this.generateSessionId(),
+                    start: this.analytics.sessionStart,
+                    duration: Date.now() - this.analytics.sessionStart,
+                    platform: this.deviceInfo?.type,
+                    language: this.environment?.i18n?.lang
+                },
+                player: {
+                    id: this.player?.getUniqueID(),
+                    name: this.player?.getName(),
+                    mode: this.player?.getMode()
+                }
+            };
+
+            await fetch(this.analytics.serverEndpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+
+            this.log('info', '📊 Отправлено событий аналитики:', eventsToSend.length);
+        } catch (error) {
+            this.log('warn', '⚠️ Ошибка отправки аналитики, добавляем в очередь', { error });
+            // Возвращаем события в очередь при ошибке
+            this.analytics.eventQueue.push(...eventsToSend);
+        }
+    }
+
+    /**
+     * Очистка очереди событий при восстановлении связи
+     */
+    async flushEventQueue() {
+        if (this.analytics.eventQueue.length > 0) {
+            this.analytics.events.push(...this.analytics.eventQueue);
+            this.analytics.eventQueue = [];
+            await this.sendAnalyticsData();
+        }
+    }
+
+    /**
+     * Генерация уникального ID сессии
+     */
+    generateSessionId() {
+        if (!this.analytics.sessionId) {
+            this.analytics.sessionId = Date.now().toString(36) + Math.random().toString(36).substr(2);
+        }
+        return this.analytics.sessionId;
     }
 
     /**
@@ -855,9 +1007,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 this.ysdk.metrica.hit(eventName, parameters);
             }
 
-            console.log(\`📊 Событие зафиксировано: \${eventName}\`, parameters);
+            this.log('info', '📊 Событие зафиксировано:', eventName, parameters);
         } catch (error) {
-            console.warn('⚠️ Ошибка отслеживания события:', error);
+            this.log('warn', '⚠️ Ошибка отслеживания события', { error });
         }
     }
 
@@ -915,7 +1067,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     /**
      * Настройка оптимизации производительности
      */
-    setupPerformanceOptimization() {
+    async setupPerformanceOptimization() {
         try {
             // Определение оптимального качества на основе устройства
             this.gameState.quality = this.detectOptimalQuality();
@@ -926,9 +1078,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             // Управление памятью
             this.setupMemoryManagement();
             
-            console.log('⚡ Оптимизация производительности настроена:', this.gameState.quality);
+            this.log('info', '⚡ Оптимизация производительности настроена:', this.gameState.quality);
         } catch (error) {
-            console.error('❌ Ошибка настройки производительности:', error);
+            this.log('error', '❌ Ошибка настройки производительности', { error });
         }
     }
 
@@ -1020,7 +1172,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (currentIndex < qualities.length - 1) {
             this.gameState.quality = qualities[currentIndex + 1];
             this.applyQualitySettings();
-            console.log('📉 Качество понижено до:', this.gameState.quality);
+            this.log('info', '📉 Качество понижено до:', this.gameState.quality);
             this.trackEvent('quality_decreased', { quality: this.gameState.quality });
         }
     }
@@ -1035,7 +1187,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (currentIndex > 0) {
             this.gameState.quality = qualities[currentIndex - 1];
             this.applyQualitySettings();
-            console.log('📈 Качество повышено до:', this.gameState.quality);
+            this.log('info', '📈 Качество повышено до:', this.gameState.quality);
             this.trackEvent('quality_increased', { quality: this.gameState.quality });
         }
     }
@@ -1073,9 +1225,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 window.gc();
             }
             
-            console.log('🧹 Очистка памяти выполнена');
+            this.log('info', '🧹 Очистка памяти выполнена');
         } catch (error) {
-            console.warn('⚠️ Ошибка очистки памяти:', error);
+            this.log('warn', '⚠️ Ошибка очистки памяти', { error });
         }
     }`;
   }
@@ -1106,9 +1258,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 this.setupMobileControls();
             }
             
-            console.log('📱 Адаптивный дизайн настроен');
+            this.log('info', '📱 Адаптивный дизайн настроен');
         } catch (error) {
-            console.error('❌ Ошибка настройки адаптивности:', error);
+            this.log('error', '❌ Ошибка настройки адаптивности', { error });
         }
     }
 
@@ -1154,7 +1306,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const gameContainer = document.getElementById('game') || document.body;
         gameContainer.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
         
-        console.log('📱 Мобильное управление настроено');
+        this.log('info', '📱 Мобильное управление настроено');
     }
 
     /**
@@ -1180,7 +1332,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             this.trackEvent('fullscreen_requested');
             return true;
         } catch (error) {
-            console.error('❌ Ошибка полноэкранного режима:', error);
+            this.log('error', '❌ Ошибка полноэкранного режима', { error });
             return false;
         }
     }
@@ -1197,7 +1349,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             this.trackEvent('fullscreen_exited');
             return true;
         } catch (error) {
-            console.error('❌ Ошибка выхода из полноэкранного режима:', error);
+            this.log('error', '❌ Ошибка выхода из полноэкранного режима', { error });
             return false;
         }
     }`;
@@ -1217,16 +1369,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             
             if (this.ysdk && this.ysdk.clipboard) {
                 await this.ysdk.clipboard.writeText(shareText);
-                console.log('📋 Результат скопирован в буфер обмена');
+                this.log('info', '📋 Результат скопирован в буфер обмена');
             } else if (navigator.clipboard) {
                 await navigator.clipboard.writeText(shareText);
-                console.log('📋 Результат скопирован в буфер обмена');
+                this.log('info', '📋 Результат скопирован в буфер обмена');
             }
             
             this.trackEvent('score_shared', { score });
             return true;
         } catch (error) {
-            console.error('❌ Ошибка копирования результата:', error);
+            this.log('error', '❌ Ошибка копирования результата', { error });
             return false;
         }
     }
@@ -1244,11 +1396,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 await navigator.clipboard.writeText(inviteText);
             }
             
-            console.log('📋 Приглашение скопировано в буфер обмена');
+            this.log('info', '📋 Приглашение скопировано в буфер обмена');
             this.trackEvent('friends_invited');
             return true;
         } catch (error) {
-            console.error('❌ Ошибка приглашения друзей:', error);
+            this.log('error', '❌ Ошибка приглашения друзей', { error });
             return false;
         }
     }
@@ -1261,11 +1413,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         try {
             await this.ysdk.shortcut.requestShortcut();
-            console.log('🔗 Ярлык создан');
+            this.log('info', '🔗 Ярлык создан');
             this.trackEvent('shortcut_created');
             return true;
         } catch (error) {
-            console.error('❌ Ошибка создания ярлыка:', error);
+            this.log('error', '❌ Ошибка создания ярлыка', { error });
             return false;
         }
     }
@@ -1278,11 +1430,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         try {
             await this.ysdk.feedback.requestReview();
-            console.log('⭐ Запрос оценки отправлен');
+            this.log('info', '⭐ Запрос оценки отправлен');
             this.trackEvent('rating_requested');
             return true;
         } catch (error) {
-            console.error('❌ Ошибка запроса оценки:', error);
+            this.log('error', '❌ Ошибка запроса оценки', { error });
             return false;
         }
     }`;
@@ -1325,7 +1477,7 @@ class LocalizationSystem {
             // В реальном проекте здесь будет загрузка с сервера
             this.translations[lang] = this.getBuiltInTranslations(lang);
         } catch (error) {
-            console.error(\`Ошибка загрузки языка \${lang}:\`, error);
+            this.log('error', 'Ошибка загрузки языка', { lang }, error);
         }
     }
     
@@ -1408,7 +1560,7 @@ class LocalizationSystem {
         
         // Если перевод не найден
         if (!translation) {
-            console.warn(\`Перевод не найден: \${key}\`);
+            this.log('warn', 'Перевод не найден:', key);
             return key;
         }
         
@@ -1449,7 +1601,7 @@ class LocalizationSystem {
     
     async changeLanguage(lang) {
         if (!this.supportedLanguages.includes(lang)) {
-            console.error(\`Язык \${lang} не поддерживается\`);
+            this.log('error', 'Язык', lang, 'не поддерживается');
             return;
         }
         
@@ -1540,7 +1692,7 @@ class AchievementSystem {
             this.unlockedAchievements = new Set(stats.achievements || []);
             this.progress = stats.achievementProgress || {};
         } catch (error) {
-            console.error('Ошибка загрузки достижений:', error);
+            this.log('error', 'Ошибка загрузки достижений', { error });
         }
     }
     
@@ -1591,7 +1743,7 @@ class AchievementSystem {
                 achievementProgress: this.progress
             });
         } catch (error) {
-            console.error('Ошибка сохранения достижений:', error);
+            this.log('error', 'Ошибка сохранения достижений', { error });
         }
     }
     

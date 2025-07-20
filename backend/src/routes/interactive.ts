@@ -481,4 +481,86 @@ function getStepGuidelines(stepType: string) {
   return guidelines;
 }
 
+/**
+ * POST /api/interactive/:gameId/step/:stepId/custom-variants
+ * Генерирует варианты с пользовательским промптом
+ */
+router.post('/:gameId/step/:stepId/custom-variants',
+  [
+    param('gameId').isUUID().withMessage('Некорректный ID игры'),
+    param('stepId').isUUID().withMessage('Некорректный ID этапа'),
+    body('customPrompt').notEmpty().withMessage('Пользовательский промпт обязателен'),
+    body('count').optional().isInt({ min: 1, max: 10 }).withMessage('Количество вариантов должно быть от 1 до 10')
+  ],
+  validateRequest,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { gameId, stepId } = req.params;
+    const { customPrompt, count = 3 } = req.body;
+
+    const response = await interactiveService.generateVariantsWithCustomPrompt(
+      gameId, 
+      stepId, 
+      customPrompt, 
+      count
+    );
+
+    res.json({
+      success: true,
+      data: response,
+      message: `Сгенерировано ${response.variants.length} вариантов с учетом ваших требований`
+    });
+  })
+);
+
+/**
+ * GET /api/interactive/:gameId/progress
+ * Получает детальный прогресс генерации
+ */
+router.get('/:gameId/progress',
+  [
+    param('gameId').isUUID().withMessage('Некорректный ID игры')
+  ],
+  validateRequest,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { gameId } = req.params;
+
+    const progress = interactiveService.getGenerationProgress(gameId);
+    
+    if (!progress) {
+      return res.status(404).json({
+        success: false,
+        message: 'Интерактивная генерация не найдена'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: progress
+    });
+  })
+);
+
+/**
+ * GET /api/interactive/:gameId/step/:stepId/variant/:variantId/preview
+ * Генерирует превью для варианта
+ */
+router.get('/:gameId/step/:stepId/variant/:variantId/preview',
+  [
+    param('gameId').isUUID().withMessage('Некорректный ID игры'),
+    param('stepId').isUUID().withMessage('Некорректный ID этапа'),
+    param('variantId').isUUID().withMessage('Некорректный ID варианта')
+  ],
+  validateRequest,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { gameId, stepId, variantId } = req.params;
+
+    const preview = await interactiveService.generateVariantPreview(gameId, stepId, variantId);
+
+    res.json({
+      success: true,
+      data: preview
+    });
+  })
+);
+
 export default router; 

@@ -20,37 +20,53 @@ const queryClient = new QueryClient({
   },
 })
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <App />
-        <Toaster
-          position="top-right"
-          toastOptions={{
-            duration: 4000,
-            style: {
-              background: '#fff',
-              color: '#374151',
-              border: '1px solid #e5e7eb',
-              borderRadius: '0.5rem',
-              fontSize: '0.875rem',
-            },
-            success: {
-              iconTheme: {
-                primary: '#10b981',
-                secondary: '#fff',
+console.log('🚀 Инициализация React приложения...')
+
+try {
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <App />
+          <Toaster
+            position="top-right"
+            toastOptions={{
+              duration: 4000,
+              style: {
+                background: '#fff',
+                color: '#374151',
+                border: '1px solid #e5e7eb',
+                borderRadius: '0.5rem',
+                fontSize: '0.875rem',
               },
-            },
-            error: {
-              iconTheme: {
-                primary: '#ef4444',
-                secondary: '#fff',
+              success: {
+                iconTheme: {
+                  primary: '#10b981',
+                  secondary: '#fff',
+                },
               },
-            },
-          }}
-        />
-      </BrowserRouter>
-    </QueryClientProvider>
-  </React.StrictMode>,
-) 
+              error: {
+                iconTheme: {
+                  primary: '#ef4444',
+                  secondary: '#fff',
+                },
+              },
+            }}
+          />
+        </BrowserRouter>
+      </QueryClientProvider>
+    </React.StrictMode>
+  )
+  console.log('✅ React приложение успешно инициализировано')
+} catch (error) {
+  console.error('❌ Ошибка инициализации React:', error)
+  
+  // Показываем ошибку пользователю
+  document.body.innerHTML = `
+    <div style="padding: 20px; text-align: center; color: red;">
+      <h2>Ошибка загрузки приложения</h2>
+      <p>Подробности в консоли браузера</p>
+      <pre>${error}</pre>
+    </div>
+  `
+} 

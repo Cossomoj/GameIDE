@@ -32,23 +32,75 @@ export abstract class BaseGameTemplate implements GameTemplate {
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' https://yandex.ru https://yastatic.net https://mc.yandex.ru data: blob:; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src 'self' https: wss:">
     <title>${title}</title>
-    <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
+    
+    <!-- Yandex Games SDK v2 - Обязательное подключение -->
     <script src="https://yandex.ru/games/sdk/v2"></script>
+    
+    <!-- Phaser 3 игровой движок -->
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
+    
     <style>
         ${cssContent}
+        ${this.generateResponsiveCSS()}
+        ${this.generateUICSS()}
     </style>
 </head>
 <body>
+    <div id="loading-screen">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Загрузка игры...</div>
+        <div class="loading-progress">
+            <div class="loading-bar"></div>
+        </div>
+    </div>
+    
     <div id="game-container">
         <div id="game"></div>
         <div id="ui-overlay">
             <div id="score">Очки: <span id="score-value">0</span></div>
             <div id="lives">Жизни: <span id="lives-value">3</span></div>
+            <div id="level">Уровень: <span id="level-value">1</span></div>
+        </div>
+        
+        <!-- Мобильные элементы управления -->
+        <div id="mobile-controls">
+            <button id="pause-btn" class="mobile-btn">⏸</button>
+            <button id="sound-btn" class="mobile-btn">🔊</button>
         </div>
     </div>
+
+    <!-- Модальные окна -->
+    <div id="pause-modal" class="modal hidden">
+        <div class="modal-content">
+            <h2>Пауза</h2>
+            <button id="resume-btn" class="game-button">Продолжить</button>
+            <button id="restart-btn" class="game-button">Заново</button>
+            <button id="menu-btn" class="game-button">Меню</button>
+        </div>
+    </div>
+
+    <div id="game-over-modal" class="modal hidden">
+        <div class="modal-content">
+            <h2>Игра окончена</h2>
+            <div id="final-score">Ваш результат: <span id="final-score-value">0</span></div>
+            <button id="play-again-btn" class="game-button">Играть снова</button>
+            <button id="share-score-btn" class="game-button">Поделиться</button>
+            <button id="leaderboard-btn" class="game-button">Рекорды</button>
+        </div>
+    </div>
+
+    <!-- Уведомления о достижениях -->
+    <div id="achievement-notifications"></div>
+
+    <!-- Основной скрипт Yandex SDK интеграции -->
+    <script>
+        ${this.generateYandexSDKIntegration()}
+    </script>
     
+    <!-- Основной игровой код -->
     <script>
         ${jsContent}
     </script>
@@ -58,12 +110,71 @@ export abstract class BaseGameTemplate implements GameTemplate {
 
   protected generateBaseCSS(): string {
     return `
+* {
+    box-sizing: border-box;
+}
+
 body {
     margin: 0;
     padding: 0;
     background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-    font-family: 'Arial', sans-serif;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+}
+
+#loading-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 10000;
+    color: white;
+    font-size: 18px;
+}
+
+.loading-spinner {
+    width: 50px;
+    height: 50px;
+    border: 4px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top-color: white;
+    animation: spin 1s ease-in-out infinite;
+    margin-bottom: 20px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.loading-text {
+    margin-bottom: 20px;
+    font-weight: bold;
+}
+
+.loading-progress {
+    width: 200px;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.loading-bar {
+    height: 100%;
+    background: white;
+    width: 0%;
+    border-radius: 3px;
+    transition: width 0.3s ease;
 }
 
 #game-container {
@@ -76,9 +187,11 @@ body {
 }
 
 #game {
-    border: 2px solid #fff;
+    border: 2px solid rgba(255, 255, 255, 0.8);
     border-radius: 10px;
-    box-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
+    box-shadow: 0 0 30px rgba(255, 255, 255, 0.3);
+    max-width: 100vw;
+    max-height: 100vh;
 }
 
 #ui-overlay {
@@ -90,10 +203,38 @@ body {
     font-weight: bold;
     text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
     z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
 }
 
-#ui-overlay div {
-    margin-bottom: 10px;
+#mobile-controls {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.mobile-btn {
+    width: 50px;
+    height: 50px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    font-size: 20px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    backdrop-filter: blur(10px);
+}
+
+.mobile-btn:hover,
+.mobile-btn:active {
+    background: rgba(255, 255, 255, 0.4);
+    transform: scale(1.1);
 }
 
 .game-button {
@@ -104,9 +245,11 @@ body {
     font-size: 16px;
     font-weight: bold;
     padding: 12px 24px;
+    margin: 8px;
     cursor: pointer;
     transition: all 0.3s ease;
     box-shadow: 0 4px 15px rgba(255, 107, 107, 0.4);
+    min-width: 120px;
 }
 
 .game-button:hover {
@@ -118,238 +261,1050 @@ body {
     transform: translateY(0);
     box-shadow: 0 2px 10px rgba(255, 107, 107, 0.4);
 }
+
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 5000;
+    backdrop-filter: blur(5px);
+}
+
+.modal.hidden {
+    display: none;
+}
+
+.modal-content {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    padding: 30px;
+    border-radius: 20px;
+    text-align: center;
+    color: white;
+    box-shadow: 0 10px 50px rgba(0, 0, 0, 0.5);
+    max-width: 90vw;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.modal-content h2 {
+    margin-top: 0;
+    margin-bottom: 20px;
+    font-size: 24px;
+}
+
+#final-score {
+    font-size: 20px;
+    margin: 20px 0;
+    font-weight: bold;
+}
+
+#achievement-notifications {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 6000;
+    pointer-events: none;
+}
 `;
   }
 
-  protected generateYandexGamesSDK(): string {
+  protected generateResponsiveCSS(): string {
     return `
-// Yandex Games SDK Integration
-class YandexGamesSDK {
+/* Адаптивность для мобильных устройств */
+@media (max-width: 768px) {
+    #ui-overlay {
+        top: 10px;
+        left: 10px;
+        font-size: 16px;
+    }
+    
+    #mobile-controls {
+        top: 10px;
+        right: 10px;
+    }
+    
+    .mobile-btn {
+        width: 45px;
+        height: 45px;
+        font-size: 18px;
+    }
+    
+    .game-button {
+        font-size: 14px;
+        padding: 10px 20px;
+        min-width: 100px;
+    }
+    
+    .modal-content {
+        padding: 20px;
+        margin: 20px;
+    }
+    
+    .modal-content h2 {
+        font-size: 20px;
+    }
+    
+    #game {
+        border: 1px solid rgba(255, 255, 255, 0.8);
+        border-radius: 5px;
+    }
+}
+
+@media (max-width: 480px) {
+    #ui-overlay {
+        font-size: 14px;
+    }
+    
+    .game-button {
+        font-size: 12px;
+        padding: 8px 16px;
+        min-width: 80px;
+    }
+    
+    .modal-content {
+        padding: 15px;
+        margin: 10px;
+    }
+}
+
+/* Планшеты */
+@media (min-width: 769px) and (max-width: 1024px) {
+    #game {
+        max-width: 90vw;
+        max-height: 90vh;
+    }
+}
+
+/* Ландшафтная ориентация */
+@media (orientation: landscape) and (max-height: 500px) {
+    #ui-overlay {
+        top: 5px;
+        left: 5px;
+        font-size: 14px;
+    }
+    
+    #mobile-controls {
+        top: 5px;
+        right: 5px;
+    }
+}
+`;
+  }
+
+  protected generateUICSS(): string {
+    return `
+/* Стили уведомлений о достижениях */
+.achievement-notification {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 15px;
+    border-radius: 10px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: inherit;
+    opacity: 0;
+    transform: translateX(100%);
+    transition: all 0.5s ease;
+    pointer-events: auto;
+    max-width: 300px;
+}
+
+.achievement-notification.show {
+    opacity: 1;
+    transform: translateX(0);
+}
+
+.achievement-icon {
+    font-size: 24px;
+    flex-shrink: 0;
+}
+
+.achievement-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.achievement-name {
+    font-weight: bold;
+    margin-bottom: 4px;
+    font-size: 14px;
+}
+
+.achievement-description {
+    font-size: 12px;
+    opacity: 0.9;
+    margin-bottom: 4px;
+}
+
+.achievement-points {
+    font-size: 11px;
+    opacity: 0.8;
+}
+
+/* Стили для полноэкранной рекламы */
+.fullscreen-ad-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.9);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+    color: white;
+    font-size: 18px;
+    text-align: center;
+}
+
+/* Анимации */
+@keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+}
+
+.pulse {
+    animation: pulse 2s infinite;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in {
+    animation: fadeIn 0.5s ease;
+}
+
+/* Скрытие элементов во время рекламы */
+.during-ad {
+    filter: blur(5px);
+    pointer-events: none;
+}
+
+/* Sticky баннер */
+.yandex-sticky-banner {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(10px);
+}
+`;
+  }
+
+  protected generateYandexSDKIntegration(): string {
+    return `
+// Yandex Games SDK v2 Правильная интеграция
+class YandexGamesManager {
     constructor() {
         this.ysdk = null;
         this.player = null;
-        this.leaderboard = null;
+        this.leaderboards = null;
+        this.payments = null;
         this.initialized = false;
-    }
-
-    async init() {
-        try {
-            this.ysdk = await YaGames.init();
-            this.player = await this.ysdk.getPlayer();
-            this.leaderboard = this.ysdk.getLeaderboards();
-            this.initialized = true;
-            console.log('Yandex Games SDK инициализирован');
-        } catch (error) {
-            console.error('Ошибка инициализации Yandex Games SDK:', error);
-        }
-    }
-
-    async showRewardedAd() {
-        if (!this.ysdk) return false;
+        this.gameReady = false;
         
+        // Состояние игры
+        this.gameState = {
+            isPaused: false,
+            isGameActive: false,
+            currentLevel: 1,
+            score: 0,
+            lives: 3
+        };
+        
+        // Реклама
+        this.adState = {
+            interstitialCount: 0,
+            maxInterstitialPerSession: 3,
+            lastInterstitialTime: 0,
+            interstitialCooldown: 180000, // 3 минуты
+            canShowAds: true
+        };
+        
+        // Локализация
+        this.language = 'ru';
+        this.region = 'ru';
+        
+        // Флаги инициализации
+        this.initPromise = null;
+        
+        // Bind методы
+        this.handleVisibilityChange = this.handleVisibilityChange.bind(this);
+        this.handleBeforeUnload = this.handleBeforeUnload.bind(this);
+    }
+
+    /**
+     * Инициализация SDK - ОБЯЗАТЕЛЬНЫЙ ВЫЗОВ
+     */
+    async init() {
+        if (this.initPromise) {
+            return this.initPromise;
+        }
+
+        this.initPromise = this._initSDK();
+        return this.initPromise;
+    }
+
+    async _initSDK() {
         try {
-            await this.ysdk.adv.showRewardedVideo({
-                callbacks: {
-                    onOpen: () => {
-                        console.log('Реклама открыта');
-                        if (game && game.scene && game.scene.isActive('GameScene')) {
-                            game.scene.pause('GameScene');
-                        }
-                    },
-                    onRewarded: () => {
-                        console.log('Награда получена');
-                        if (window.gameInstance) {
-                            window.gameInstance.addReward();
-                        }
-                    },
-                    onClose: () => {
-                        console.log('Реклама закрыта');
-                        if (game && game.scene && game.scene.isPaused('GameScene')) {
-                            game.scene.resume('GameScene');
-                        }
-                    },
-                    onError: (error) => {
-                        console.error('Ошибка рекламы:', error);
-                        if (game && game.scene && game.scene.isPaused('GameScene')) {
-                            game.scene.resume('GameScene');
-                        }
-                    }
+            this.log('🎮 Инициализация Yandex Games SDK v2...');
+            
+            // Проверяем доступность SDK
+            if (typeof YaGames === 'undefined') {
+                throw new Error('Yandex Games SDK не загружен');
+            }
+
+            // Инициализируем SDK
+            this.ysdk = await YaGames.init({
+                orientation: {
+                    value: 'landscape',
+                    lock: true
                 }
             });
+
+            this.log('✅ Yandex Games SDK инициализирован');
+
+            // Получаем информацию об окружении
+            await this.initEnvironment();
+
+            // Инициализируем игрока
+            await this.initPlayer();
+
+            // Инициализируем сервисы
+            await this.initServices();
+
+            // Настраиваем обработчики событий
+            this.setupEventHandlers();
+
+            // Настраиваем производительность
+            this.optimizePerformance();
+
+            this.initialized = true;
+            this.log('🚀 Все сервисы готовы к работе');
+
+            // Сигнализируем о готовности к показу
+            this.signalGameReady();
+
             return true;
+
         } catch (error) {
-            console.error('Ошибка показа рекламы:', error);
+            this.log('❌ Ошибка инициализации:', error);
+            this.initFallbackMode();
             return false;
         }
     }
 
-    async showInterstitialAd() {
-        if (!this.ysdk) return;
-        
+    /**
+     * Инициализация окружения и определение региона
+     */
+    async initEnvironment() {
         try {
-            await this.ysdk.adv.showFullscreenAdv({
-                callbacks: {
-                    onOpen: () => {
-                        if (game && game.scene && game.scene.isActive('GameScene')) {
-                            game.scene.pause('GameScene');
-                        }
-                    },
-                    onClose: () => {
-                        if (game && game.scene && game.scene.isPaused('GameScene')) {
-                            game.scene.resume('GameScene');
-                        }
-                    },
-                    onError: (error) => {
-                        console.error('Ошибка межстраничной рекламы:', error);
-                    }
+            if (this.ysdk.environment) {
+                this.language = this.ysdk.environment.i18n.lang || 'ru';
+                this.region = this.ysdk.environment.i18n.tld || 'ru';
+                
+                this.log('🌍 Окружение определено:', {
+                    язык: this.language,
+                    регион: this.region,
+                    домен: '.' + this.region
+                });
+
+                // Применяем локализацию
+                this.applyLocalization();
+            }
+        } catch (error) {
+            this.log('⚠️ Ошибка получения окружения:', error);
+        }
+    }
+
+    /**
+     * Инициализация игрока
+     */
+    async initPlayer() {
+        try {
+            this.player = await this.ysdk.getPlayer({ scopes: false });
+            this.log('👤 Игрок инициализирован:', this.player.getName());
+        } catch (error) {
+            this.log('⚠️ Ошибка инициализации игрока:', error);
+        }
+    }
+
+    /**
+     * Инициализация дополнительных сервисов
+     */
+    async initServices() {
+        try {
+            // Лидерборды
+            if (this.ysdk.getLeaderboards) {
+                this.leaderboards = await this.ysdk.getLeaderboards();
+                this.log('🏆 Лидерборды инициализированы');
+            }
+
+            // Платежи (если поддерживаются)
+            if (this.ysdk.getPayments) {
+                try {
+                    this.payments = await this.ysdk.getPayments({ signed: true });
+                    this.log('💳 Платежи инициализированы');
+                } catch (error) {
+                    this.log('⚠️ Платежи недоступны:', error);
                 }
-            });
+            }
         } catch (error) {
-            console.error('Ошибка показа межстраничной рекламы:', error);
+            this.log('⚠️ Ошибка инициализации сервисов:', error);
         }
     }
 
-    async saveScore(score) {
-        if (!this.leaderboard) return;
+    /**
+     * Fallback режим для разработки
+     */
+    initFallbackMode() {
+        this.log('🔧 Запуск в режиме эмуляции');
+        this.initialized = true;
+        this.gameReady = true;
         
-        try {
-            await this.leaderboard.setLeaderboardScore('main', score);
-            console.log('Результат сохранен:', score);
-        } catch (error) {
-            console.error('Ошибка сохранения результата:', error);
+        // Создаем заглушки
+        this.player = {
+            getName: () => 'Игрок',
+            getPhoto: () => '',
+            getUniqueID: () => 'fallback_id',
+            getMode: () => 'lite',
+            getData: () => Promise.resolve({}),
+            setData: () => Promise.resolve(),
+            getStats: () => Promise.resolve({}),
+            setStats: () => Promise.resolve()
+        };
+
+        this.removeLoadingScreen();
+    }
+
+    /**
+     * Настройка обработчиков событий
+     */
+    setupEventHandlers() {
+        // Обработка видимости страницы
+        document.addEventListener('visibilitychange', this.handleVisibilityChange);
+        
+        // Обработка закрытия окна
+        window.addEventListener('beforeunload', this.handleBeforeUnload);
+        
+        // Обработка фокуса
+        window.addEventListener('blur', () => this.pauseGame());
+        window.addEventListener('focus', () => this.resumeGame());
+
+        // Мобильные обработчики
+        this.setupMobileHandlers();
+    }
+
+    /**
+     * Обработка изменения видимости
+     */
+    handleVisibilityChange() {
+        if (document.hidden) {
+            this.pauseGame();
+        } else {
+            this.resumeGame();
         }
     }
 
-    async getLeaderboard() {
-        if (!this.leaderboard) return null;
-        
-        try {
-            const result = await this.leaderboard.getLeaderboardEntries('main', {
-                includeUser: true,
-                quantityAround: 5,
-                quantityTop: 10
-            });
-            return result;
-        } catch (error) {
-            console.error('Ошибка получения таблицы лидеров:', error);
-            return null;
+    /**
+     * Обработка перед закрытием
+     */
+    handleBeforeUnload() {
+        this.saveGameData();
+    }
+
+    /**
+     * Настройка мобильных обработчиков
+     */
+    setupMobileHandlers() {
+        // Предотвращение масштабирования
+        document.addEventListener('touchmove', (e) => {
+            if (e.scale !== 1) e.preventDefault();
+        }, { passive: false });
+
+        // Предотвращение контекстного меню
+        document.addEventListener('contextmenu', (e) => e.preventDefault());
+
+        // Обработка ориентации
+        window.addEventListener('orientationchange', () => {
+            setTimeout(() => this.handleOrientationChange(), 100);
+        });
+    }
+
+    /**
+     * Обработка изменения ориентации
+     */
+    handleOrientationChange() {
+        if (window.game && window.game.scale) {
+            window.game.scale.refresh();
         }
     }
-}
 
-// Глобальный экземпляр SDK
-window.yandexSDK = new YandexGamesSDK();
-`;
-  }
+    /**
+     * Применение локализации
+     */
+    applyLocalization() {
+        const texts = {
+            ru: {
+                loading: 'Загрузка игры...',
+                score: 'Очки:',
+                lives: 'Жизни:',
+                level: 'Уровень:',
+                pause: 'Пауза',
+                resume: 'Продолжить',
+                gameOver: 'Игра окончена',
+                playAgain: 'Играть снова',
+                share: 'Поделиться'
+            },
+            en: {
+                loading: 'Loading game...',
+                score: 'Score:',
+                lives: 'Lives:',
+                level: 'Level:',
+                pause: 'Pause',
+                resume: 'Resume',
+                gameOver: 'Game Over',
+                playAgain: 'Play Again',
+                share: 'Share'
+            },
+            tr: {
+                loading: 'Oyun yükleniyor...',
+                score: 'Puan:',
+                lives: 'Can:',
+                level: 'Seviye:',
+                pause: 'Duraklat',
+                resume: 'Devam Et',
+                gameOver: 'Oyun Bitti',
+                playAgain: 'Tekrar Oyna',
+                share: 'Paylaş'
+            }
+        };
 
-  protected generateBaseSounds(): string {
-    return `
-// Звуковая система
-class SoundManager {
-    constructor(scene) {
-        this.scene = scene;
-        this.sounds = {};
-        this.musicVolume = 0.5;
-        this.soundVolume = 0.7;
-        this.muted = false;
-    }
-
-    preload() {
-        // Звуки будут загружены из base64 или URL
-        this.loadSounds();
-    }
-
-    loadSounds() {
-        // Звук прыжка/действия
-        this.scene.load.audio('jump', ['data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmQeATuF0fPJdiMFl2a27+CVSA']);
+        const currentTexts = texts[this.language] || texts.ru;
         
-        // Звук монеты/бонуса  
-        this.scene.load.audio('coin', ['data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmQeATuF0fPJdiMFl2a27+CVSA']);
-        
-        // Звук смерти/урона
-        this.scene.load.audio('hurt', ['data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmQeATuF0fPJdiMFl2a27+CVSA']);
-    }
-
-    create() {
-        Object.keys(this.sounds).forEach(key => {
-            if (this.scene.cache.audio.exists(key)) {
-                this.sounds[key] = this.scene.sound.add(key, { volume: this.soundVolume });
+        // Применяем переводы
+        document.querySelectorAll('[data-translate]').forEach(el => {
+            const key = el.getAttribute('data-translate');
+            if (currentTexts[key]) {
+                el.textContent = currentTexts[key];
             }
         });
     }
 
-    play(key, config = {}) {
-        if (this.muted) return;
-        
-        if (this.sounds[key]) {
-            this.sounds[key].play({
-                volume: this.soundVolume,
-                ...config
+    /**
+     * ПРАВИЛЬНАЯ обработка полноэкранной рекламы с ограничениями
+     */
+    async showInterstitialAd() {
+        if (!this.canShowInterstitial()) {
+            this.log('⏰ Межстраничная реклама заблокирована (лимит или кулдаун)');
+            return false;
+        }
+
+        try {
+            this.log('📺 Показ межстраничной рекламы...');
+            this.pauseGame();
+
+            await this.ysdk.adv.showFullscreenAdv({
+                callbacks: {
+                    onOpen: () => {
+                        this.log('📺 Реклама открыта');
+                    },
+                    onClose: (wasShown) => {
+                        this.log('📺 Реклама закрыта, была показана:', wasShown);
+                        if (wasShown) {
+                            this.adState.interstitialCount++;
+                            this.adState.lastInterstitialTime = Date.now();
+                        }
+                        this.resumeGame();
+                    },
+                    onError: (error) => {
+                        this.log('❌ Ошибка рекламы:', error);
+                        this.resumeGame();
+                    }
+                }
             });
+
+            return true;
+
+        } catch (error) {
+            this.log('❌ Ошибка показа межстраничной рекламы:', error);
+            this.resumeGame();
+            return false;
         }
     }
 
-    setVolume(volume) {
-        this.soundVolume = volume;
-        Object.values(this.sounds).forEach(sound => {
-            sound.setVolume(volume);
+    /**
+     * Проверка возможности показа межстраничной рекламы
+     */
+    canShowInterstitial() {
+        const now = Date.now();
+        const timeSinceLastAd = now - this.adState.lastInterstitialTime;
+        
+        return this.adState.canShowAds && 
+               this.adState.interstitialCount < this.adState.maxInterstitialPerSession &&
+               timeSinceLastAd >= this.adState.interstitialCooldown;
+    }
+
+    /**
+     * Показ рекламы с вознаграждением
+     */
+    async showRewardedAd() {
+        if (!this.ysdk || !this.adState.canShowAds) {
+            this.log('⚠️ Реклама недоступна');
+            return false;
+        }
+
+        try {
+            this.log('🎁 Показ рекламы с вознаграждением...');
+            this.pauseGame();
+
+            await this.ysdk.adv.showRewardedVideo({
+                callbacks: {
+                    onOpen: () => {
+                        this.log('🎁 Реклама с наградой открыта');
+                    },
+                    onRewarded: () => {
+                        this.log('🎁 Награда получена!');
+                        this.giveReward();
+                    },
+                    onClose: () => {
+                        this.log('🎁 Реклама с наградой закрыта');
+                        this.resumeGame();
+                    },
+                    onError: (error) => {
+                        this.log('❌ Ошибка рекламы с наградой:', error);
+                        this.resumeGame();
+                    }
+                }
+            });
+
+            return true;
+
+        } catch (error) {
+            this.log('❌ Ошибка показа рекламы с наградой:', error);
+            this.resumeGame();
+            return false;
+        }
+    }
+
+    /**
+     * Выдача награды за просмотр рекламы
+     */
+    giveReward() {
+        // Можно переопределить в конкретной игре
+        if (window.game && window.game.addReward) {
+            window.game.addReward();
+        } else {
+            // Стандартная награда - дополнительная жизнь
+            this.gameState.lives = Math.min(this.gameState.lives + 1, 5);
+            this.updateUI();
+        }
+    }
+
+    /**
+     * Sticky баннер (максимальная доходность)
+     */
+    showStickyBanner() {
+        if (!this.ysdk) return false;
+
+        try {
+            this.ysdk.adv.showBannerAdv();
+            this.log('📰 Sticky баннер показан');
+            return true;
+        } catch (error) {
+            this.log('❌ Ошибка показа баннера:', error);
+            return false;
+        }
+    }
+
+    hideStickyBanner() {
+        if (!this.ysdk) return false;
+
+        try {
+            this.ysdk.adv.hideBannerAdv();
+            this.log('📰 Sticky баннер скрыт');
+            return true;
+        } catch (error) {
+            this.log('❌ Ошибка скрытия баннера:', error);
+            return false;
+        }
+    }
+
+    /**
+     * ПРАВИЛЬНАЯ работа с лидербордами через ysdk.getLeaderboards()
+     */
+    async submitScore(score, leaderboardName = 'main') {
+        if (!this.leaderboards) {
+            this.log('⚠️ Лидерборды не инициализированы');
+            return false;
+        }
+
+        try {
+            await this.leaderboards.setLeaderboardScore(leaderboardName, score);
+            this.log('🎯 Результат отправлен в лидерборд:', score);
+            return true;
+        } catch (error) {
+            this.log('❌ Ошибка отправки результата:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Получение лидерборда
+     */
+    async getLeaderboard(leaderboardName = 'main') {
+        if (!this.leaderboards) return null;
+
+        try {
+            const result = await this.leaderboards.getLeaderboardEntries(leaderboardName, {
+                quantityTop: 10,
+                includeUser: true,
+                quantityAround: 5
+            });
+            
+            this.log('🏆 Лидерборд получен');
+            return result;
+        } catch (error) {
+            this.log('❌ Ошибка получения лидерборда:', error);
+            return null;
+        }
+    }
+
+    /**
+     * ПРАВИЛЬНАЯ работа с достижениями через специальный API
+     */
+    async unlockAchievement(achievementId) {
+        if (!this.player) return false;
+
+        try {
+            const stats = await this.player.getStats(['achievements']);
+            const achievements = new Set(stats.achievements || []);
+            
+            if (!achievements.has(achievementId)) {
+                achievements.add(achievementId);
+                await this.player.setStats({ 
+                    achievements: Array.from(achievements) 
+                });
+                
+                this.showAchievementNotification(achievementId);
+                this.log('🏆 Достижение разблокировано:', achievementId);
+                return true;
+            }
+            
+            return false;
+        } catch (error) {
+            this.log('❌ Ошибка разблокировки достижения:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Показ уведомления о достижении
+     */
+    showAchievementNotification(achievementId) {
+        const achievements = {
+            first_game: { name: 'Первая игра', icon: '🎮' },
+            score_1000: { name: '1000 очков', icon: '💯' },
+            level_10: { name: '10 уровень', icon: '🚀' }
+        };
+
+        const achievement = achievements[achievementId];
+        if (!achievement) return;
+
+        const notification = document.createElement('div');
+        notification.className = 'achievement-notification';
+        notification.innerHTML = \`
+            <div class="achievement-icon">\${achievement.icon}</div>
+            <div class="achievement-info">
+                <div class="achievement-name">\${achievement.name}</div>
+                <div class="achievement-description">Достижение разблокировано!</div>
+            </div>
+        \`;
+
+        document.getElementById('achievement-notifications').appendChild(notification);
+        
+        setTimeout(() => notification.classList.add('show'), 100);
+        setTimeout(() => {
+            notification.classList.remove('show');
+            setTimeout(() => notification.remove(), 500);
+        }, 4000);
+    }
+
+    /**
+     * Сохранение данных игры
+     */
+    async saveGameData(data = null) {
+        if (!this.player) return false;
+
+        try {
+            const gameData = data || {
+                level: this.gameState.currentLevel,
+                score: this.gameState.score,
+                lastPlayed: Date.now()
+            };
+
+            await this.player.setData(gameData, true);
+            this.log('💾 Данные сохранены');
+            return true;
+        } catch (error) {
+            this.log('❌ Ошибка сохранения:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Загрузка данных игры
+     */
+    async loadGameData() {
+        if (!this.player) return {};
+
+        try {
+            const data = await this.player.getData();
+            this.log('📂 Данные загружены');
+            return data;
+        } catch (error) {
+            this.log('❌ Ошибка загрузки:', error);
+            return {};
+        }
+    }
+
+    /**
+     * Пауза игры
+     */
+    pauseGame() {
+        if (this.gameState.isPaused) return;
+        
+        this.gameState.isPaused = true;
+        
+        if (window.game && window.game.scene) {
+            window.game.scene.pause();
+        }
+        
+        this.log('⏸️ Игра на паузе');
+    }
+
+    /**
+     * Возобновление игры
+     */
+    resumeGame() {
+        if (!this.gameState.isPaused) return;
+        
+        this.gameState.isPaused = false;
+        
+        if (window.game && window.game.scene) {
+            window.game.scene.resume();
+        }
+        
+        this.log('▶️ Игра возобновлена');
+    }
+
+    /**
+     * Сигнал готовности игры к показу
+     */
+    signalGameReady() {
+        try {
+            if (this.ysdk && this.ysdk.features && this.ysdk.features.LoadingAPI) {
+                this.ysdk.features.LoadingAPI.ready();
+                this.log('🎮 Сигнал готовности отправлен');
+            }
+            
+            this.gameReady = true;
+            this.removeLoadingScreen();
+            
+            // Показываем sticky баннер
+            setTimeout(() => this.showStickyBanner(), 1000);
+            
+        } catch (error) {
+            this.log('⚠️ Ошибка сигнала готовности:', error);
+            this.removeLoadingScreen();
+        }
+    }
+
+    /**
+     * Удаление экрана загрузки
+     */
+    removeLoadingScreen() {
+        const loadingScreen = document.getElementById('loading-screen');
+        if (loadingScreen) {
+            loadingScreen.style.opacity = '0';
+            setTimeout(() => loadingScreen.remove(), 300);
+        }
+    }
+
+    /**
+     * Обновление прогресса загрузки
+     */
+    updateLoadingProgress(progress) {
+        const bar = document.querySelector('.loading-bar');
+        if (bar) {
+            bar.style.width = progress + '%';
+        }
+    }
+
+    /**
+     * Обновление UI
+     */
+    updateUI() {
+        const scoreEl = document.getElementById('score-value');
+        const livesEl = document.getElementById('lives-value');
+        const levelEl = document.getElementById('level-value');
+        
+        if (scoreEl) scoreEl.textContent = this.gameState.score;
+        if (livesEl) livesEl.textContent = this.gameState.lives;
+        if (levelEl) levelEl.textContent = this.gameState.currentLevel;
+    }
+
+    /**
+     * Оптимизация производительности
+     */
+    optimizePerformance() {
+        // Определение качества на основе устройства
+        const deviceInfo = this.ysdk?.deviceInfo;
+        let quality = 'medium';
+        
+        if (deviceInfo) {
+            if (deviceInfo.isMobile()) {
+                quality = 'low';
+            } else if (deviceInfo.isDesktop()) {
+                quality = 'high';
+            }
+        }
+        
+        if (window.game && window.game.setQuality) {
+            window.game.setQuality(quality);
+        }
+        
+        this.log('⚡ Качество установлено:', quality);
+    }
+
+    /**
+     * Логирование
+     */
+    log(...args) {
+        console.log('[YandexGames]', ...args);
+    }
+
+    // Геттеры для состояния
+    get isInitialized() { return this.initialized; }
+    get isReady() { return this.gameReady; }
+    get currentLanguage() { return this.language; }
+    get currentRegion() { return this.region; }
+    get playerInfo() {
+        return this.player ? {
+            name: this.player.getName(),
+            id: this.player.getUniqueID(),
+            photo: this.player.getPhoto('medium')
+        } : null;
+    }
+}
+
+// Создаем глобальный экземпляр
+window.yandexGames = new YandexGamesManager();
+
+// Автоматическая инициализация при загрузке DOM
+document.addEventListener('DOMContentLoaded', async () => {
+    await window.yandexGames.init();
+});
+
+// Базовые обработчики UI
+document.addEventListener('DOMContentLoaded', () => {
+    // Кнопка паузы
+    const pauseBtn = document.getElementById('pause-btn');
+    if (pauseBtn) {
+        pauseBtn.addEventListener('click', () => {
+            const modal = document.getElementById('pause-modal');
+            if (modal) {
+                modal.classList.remove('hidden');
+                window.yandexGames.pauseGame();
+            }
         });
     }
 
-    mute() {
-        this.muted = true;
-        this.scene.sound.mute = true;
+    // Кнопка возобновления
+    const resumeBtn = document.getElementById('resume-btn');
+    if (resumeBtn) {
+        resumeBtn.addEventListener('click', () => {
+            const modal = document.getElementById('pause-modal');
+            if (modal) {
+                modal.classList.add('hidden');
+                window.yandexGames.resumeGame();
+            }
+        });
     }
 
-    unmute() {
-        this.muted = false;
-        this.scene.sound.mute = false;
-    }
-}
-`;
-  }
-
-  protected generateBasePhysics(): string {
-    return `
-// Базовая физика и коллизии
-class PhysicsHelper {
-    static setupCollision(object1, object2, callback, context) {
-        if (context.physics && context.physics.world) {
-            context.physics.add.overlap(object1, object2, callback, null, context);
-        }
+    // Кнопка рестарта
+    const restartBtn = document.getElementById('restart-btn');
+    if (restartBtn) {
+        restartBtn.addEventListener('click', () => {
+            if (window.game && window.game.restart) {
+                window.game.restart();
+            }
+            document.getElementById('pause-modal').classList.add('hidden');
+        });
     }
 
-    static enablePhysics(scene, object, options = {}) {
-        scene.physics.add.existing(object);
-        
-        if (options.bounceX !== undefined) {
-            object.body.setBounceX(options.bounceX);
-        }
-        if (options.bounceY !== undefined) {
-            object.body.setBounceY(options.bounceY);
-        }
-        if (options.dragX !== undefined) {
-            object.body.setDragX(options.dragX);
-        }
-        if (options.gravity !== undefined) {
-            object.body.setGravityY(options.gravity);
-        }
-        if (options.maxVelocityX !== undefined) {
-            object.body.setMaxVelocityX(options.maxVelocityX);
-        }
-        if (options.collideWorldBounds !== undefined) {
-            object.body.setCollideWorldBounds(options.collideWorldBounds);
-        }
-        
-        return object;
+    // Кнопка звука
+    const soundBtn = document.getElementById('sound-btn');
+    if (soundBtn) {
+        let soundOn = true;
+        soundBtn.addEventListener('click', () => {
+            soundOn = !soundOn;
+            soundBtn.textContent = soundOn ? '🔊' : '🔇';
+            if (window.game && window.game.toggleSound) {
+                window.game.toggleSound(soundOn);
+            }
+        });
     }
 
-    static createPlatform(scene, x, y, width, height, color = 0x654321) {
-        const platform = scene.add.rectangle(x, y, width, height, color);
-        scene.physics.add.existing(platform, true); // true для статичного тела
-        return platform;
+    // Кнопка "Играть снова"
+    const playAgainBtn = document.getElementById('play-again-btn');
+    if (playAgainBtn) {
+        playAgainBtn.addEventListener('click', () => {
+            if (window.game && window.game.restart) {
+                window.game.restart();
+            }
+            document.getElementById('game-over-modal').classList.add('hidden');
+        });
     }
-}
+
+    // Кнопка "Поделиться"
+    const shareBtn = document.getElementById('share-score-btn');
+    if (shareBtn) {
+        shareBtn.addEventListener('click', () => {
+            const score = window.yandexGames.gameState.score;
+            const text = \`Мой результат: \${score} очков! Попробуй повторить!\`;
+            if (navigator.share) {
+                navigator.share({ text });
+            } else if (navigator.clipboard) {
+                navigator.clipboard.writeText(text);
+            }
+        });
+    }
+
+    // Кнопка лидерборда
+    const leaderboardBtn = document.getElementById('leaderboard-btn');
+    if (leaderboardBtn) {
+        leaderboardBtn.addEventListener('click', async () => {
+            const leaderboard = await window.yandexGames.getLeaderboard();
+            console.log('Лидерборд:', leaderboard);
+            // Здесь можно показать лидерборд в UI
+        });
+    }
+});
 `;
   }
 

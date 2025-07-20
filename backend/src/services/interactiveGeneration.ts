@@ -334,6 +334,168 @@ export class InteractiveGenerationService extends EventEmitter {
     }
   }
 
+  /**
+   * Генерирует варианты с учетом пользовательского промпта
+   */
+  public async generateVariantsWithCustomPrompt(
+    gameId: string,
+    stepId: string,
+    customPrompt: string,
+    count: number = 3
+  ): Promise<VariantGenerationResponse> {
+    try {
+      const state = this.activeGenerations.get(gameId);
+      if (!state) {
+        throw new Error(`Интерактивная генерация ${gameId} не найдена`);
+      }
+
+      const step = state.steps.find(s => s.stepId === stepId);
+      if (!step) {
+        throw new Error(`Этап ${stepId} не найден`);
+      }
+
+      this.emit('variants:generating', {
+        gameId,
+        stepId,
+        progress: 0,
+        message: `Генерируем ${count} вариантов с учетом ваших требований: "${customPrompt}"`
+      });
+
+      // Добавляем контекст пользовательского промпта
+      const context = this.buildContextFromCompletedSteps(state);
+      context.userRequirements = customPrompt;
+
+      const variants = await this.generateVariantsForStepWithContext(step, context, count);
+
+      // Отмечаем варианты как созданные с пользовательским промптом
+      variants.forEach(variant => {
+        variant.metadata = {
+          ...variant.metadata,
+          userPrompt: customPrompt,
+          isCustom: true
+        };
+      });
+
+      // Добавляем варианты к этапу
+      step.variants.push(...variants);
+      state.lastActivityAt = new Date();
+
+      const response: VariantGenerationResponse = {
+        stepId,
+        variants,
+        generatedAt: new Date(),
+        totalCount: variants.length,
+        hasMore: true,
+        customPrompt
+      };
+
+      this.emit('variants:generated', {
+        gameId,
+        stepId,
+        variants,
+        isCustomGeneration: true,
+        customPrompt
+      });
+
+      return response;
+    } catch (error) {
+      this.logger.error(`Ошибка генерации кастомных вариантов для ${gameId}/${stepId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Получает детальный прогресс генерации с этапами
+   */
+  public getGenerationProgress(gameId: string): {
+    currentStep: number;
+    totalSteps: number;
+    stepName: string;
+    stepDescription: string;
+    progress: number;
+    variantsGenerated: number;
+    isWaitingForSelection: boolean;
+  } | null {
+    const state = this.activeGenerations.get(gameId);
+    if (!state) return null;
+
+    const currentStep = state.steps[state.currentStepIndex];
+    if (!currentStep) return null;
+
+    return {
+      currentStep: state.currentStepIndex + 1,
+      totalSteps: state.totalSteps,
+      stepName: currentStep.name,
+      stepDescription: currentStep.description,
+      progress: Math.round(((state.currentStepIndex + 1) / state.totalSteps) * 100),
+      variantsGenerated: currentStep.variants.length,
+      isWaitingForSelection: currentStep.variants.length > 0 && !currentStep.isCompleted
+    };
+  }
+
+  /**
+   * Генерирует предварительный просмотр для варианта
+   */
+  public async generateVariantPreview(
+    gameId: string,
+    stepId: string,
+    variantId: string
+  ): Promise<{ preview: string; type: 'image' | 'audio' | 'text' }> {
+    try {
+      const state = this.activeGenerations.get(gameId);
+      if (!state) {
+        throw new Error(`Генерация ${gameId} не найдена`);
+      }
+
+      const step = state.steps.find(s => s.stepId === stepId);
+      if (!step) {
+        throw new Error(`Этап ${stepId} не найден`);
+      }
+
+      const variant = step.variants.find(v => v.id === variantId);
+      if (!variant) {
+        throw new Error(`Вариант ${variantId} не найден`);
+      }
+
+      // Генерируем превью в зависимости от типа этапа
+      switch (step.type) {
+        case 'character':
+        case 'graphics':
+          // Генерируем изображение персонажа/графики
+          const imageResult = await this.openai.generateSprite(
+            `${variant.content.description} - превью для игры`,
+            variant.content.style || 'pixel art',
+            { width: 128, height: 128 }
+          );
+          return {
+            preview: `data:image/png;base64,${imageResult.data.toString('base64')}`,
+            type: 'image'
+          };
+
+        case 'sounds':
+          // Генерируем короткий звуковой превью
+          const audioResult = await this.openai.generateSound(
+            variant.content.description,
+            500 // 0.5 секунды превью
+          );
+          return {
+            preview: `data:audio/wav;base64,${audioResult.data.toString('base64')}`,
+            type: 'audio'
+          };
+
+        default:
+          // Для остальных типов возвращаем текстовое описание
+          return {
+            preview: JSON.stringify(variant.content, null, 2),
+            type: 'text'
+          };
+      }
+    } catch (error) {
+      this.logger.error(`Ошибка генерации превью для ${variantId}:`, error);
+      throw error;
+    }
+  }
+
   // Приватные методы
 
   private async startStep(gameId: string, stepIndex: number): Promise<void> {
@@ -598,280 +760,955 @@ export class InteractiveGenerationService extends EventEmitter {
   }
 
   private async buildFinalGame(state: InteractiveGenerationState): Promise<string> {
-    // TODO: Реализовать создание финальной игры на основе выборов
-    // Этот метод должен собрать все выбранные варианты и создать полную игру
-
+    this.logger.info(`🎮 Собираем финальную игру из интерактивных выборов: ${state.gameId}`);
+    
     const outputDir = path.join(process.cwd(), 'generated-games', state.gameId);
     await fs.mkdir(outputDir, { recursive: true });
 
-    // Пока просто создаем заглушку
+    try {
+      // Анализируем выборы пользователя и строим конфигурацию игры
+      const gameConfig = this.buildGameConfiguration(state);
+      
+      // Генерируем основные файлы игры
+      const gameFiles = await this.generateGameFiles(gameConfig, state);
+      
+      // Создаем структуру файлов
+      await this.createGameStructure(outputDir, gameFiles);
+      
+      // Генерируем Yandex SDK интеграцию
+      await this.generateYandexIntegration(outputDir, gameConfig);
+      
+      // Создаем манифест игры
+      await this.createGameManifest(outputDir, gameConfig);
+      
+      this.logger.info(`✅ Интерактивная игра собрана: ${outputDir}`);
+      return outputDir;
+      
+    } catch (error) {
+      this.logger.error('Ошибка сборки интерактивной игры', { error, gameId: state.gameId });
+      
+      // В случае ошибки создаем простую игру-заглушку
+      await this.createFallbackGame(outputDir, state);
+      return outputDir;
+    }
+  }
+
+  private buildGameConfiguration(state: InteractiveGenerationState): any {
+    const config: any = {
+      id: state.gameId,
+      title: 'Интерактивно созданная игра',
+      genre: 'platformer', // по умолчанию
+      character: null,
+      mechanics: null,
+      levels: [],
+      graphics: null,
+      sounds: [],
+      ui: null,
+      story: null
+    };
+
+    // Проходим по завершенным шагам и собираем конфигурацию
+    for (const step of state.steps) {
+      if (step.isCompleted && step.selectedVariant) {
+        const variant = step.variants.find(v => v.id === step.selectedVariant);
+        if (!variant) continue;
+
+        switch (step.type) {
+          case 'character':
+            config.character = variant.content;
+            config.title = config.character.name ? `Приключения ${config.character.name}` : config.title;
+            break;
+            
+          case 'mechanics':
+            config.mechanics = variant.content;
+            if (variant.content.coreLoop) {
+              // Определяем жанр по механикам
+              if (variant.content.coreLoop.includes('jump') || variant.content.coreLoop.includes('platform')) {
+                config.genre = 'platformer';
+              } else if (variant.content.coreLoop.includes('puzzle') || variant.content.coreLoop.includes('match')) {
+                config.genre = 'puzzle';
+              } else if (variant.content.coreLoop.includes('shoot') || variant.content.coreLoop.includes('enemy')) {
+                config.genre = 'arcade';
+              }
+            }
+            break;
+            
+          case 'levels':
+            config.levels.push(variant.content);
+            break;
+            
+          case 'graphics':
+            config.graphics = variant.content;
+            break;
+            
+          case 'sounds':
+            config.sounds.push(variant.content);
+            break;
+            
+          case 'ui':
+            config.ui = variant.content;
+            break;
+            
+          case 'story':
+            config.story = variant.content;
+            break;
+        }
+      }
+    }
+
+    return config;
+  }
+
+  private async generateGameFiles(gameConfig: any, state: InteractiveGenerationState): Promise<Record<string, string>> {
+    const files: Record<string, string> = {};
+
+    // Генерируем HTML файл
+    files['index.html'] = this.generateIndexHTML(gameConfig);
+    
+    // Генерируем CSS стили
+    files['styles.css'] = this.generateCSS(gameConfig);
+    
+    // Генерируем JavaScript код игры
+    files['game.js'] = await this.generateGameJavaScript(gameConfig);
+    
+    // Генерируем конфигурационный файл
+    files['config.json'] = JSON.stringify(gameConfig, null, 2);
+    
+    // Если есть персонаж, создаем файл персонажа
+    if (gameConfig.character) {
+      files['character.js'] = this.generateCharacterCode(gameConfig.character);
+    }
+    
+    // Если есть уровни, создаем файлы уровней
+    if (gameConfig.levels.length > 0) {
+      gameConfig.levels.forEach((level: any, index: number) => {
+        files[`level${index + 1}.js`] = this.generateLevelCode(level, index + 1);
+      });
+    }
+
+    return files;
+  }
+
+  private generateIndexHTML(gameConfig: any): string {
+    const title = gameConfig.title || 'Интерактивная игра';
+    const backgroundColor = gameConfig.graphics?.colorPalette?.[0] || '#2c3e50';
+    
+    return `<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${title}</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://yandex.ru/games/sdk/v2"></script>
+</head>
+<body style="background-color: ${backgroundColor}; margin: 0; padding: 0;">
+    <div id="game-container">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        
+        <!-- UI элементы -->
+        <div id="game-ui">
+            <div id="score-display">Счет: <span id="score">0</span></div>
+            <div id="lives-display">Жизни: <span id="lives">3</span></div>
+            <div id="level-display">Уровень: <span id="level">1</span></div>
+        </div>
+        
+        <!-- Мобильное управление -->
+        <div id="mobile-controls" class="mobile-only">
+            <button id="left-btn" class="control-btn">←</button>
+            <button id="right-btn" class="control-btn">→</button>
+            <button id="jump-btn" class="control-btn">↑</button>
+        </div>
+        
+        <!-- Меню игры -->
+        <div id="game-menu" class="menu hidden">
+            <div class="menu-content">
+                <h2>Игра окончена!</h2>
+                <p>Ваш счет: <span id="final-score">0</span></p>
+                <button id="restart-btn">Играть снова</button>
+                <button id="share-btn">Поделиться</button>
+            </div>
+        </div>
+        
+        <!-- Загрузочный экран -->
+        <div id="loading-screen">
+            <div class="loading-content">
+                <h1>${title}</h1>
+                <div class="loading-spinner"></div>
+                <p>Загрузка...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Подключаем игровые скрипты -->
+    ${gameConfig.character ? '<script src="character.js"></script>' : ''}
+    ${gameConfig.levels.map((_: any, i: number) => `<script src="level${i + 1}.js"></script>`).join('\\n    ')}
+    <script src="game.js"></script>
+    
+    <script>
+        // Инициализация после загрузки Yandex SDK
+        window.addEventListener('load', () => {
+            initializeYandexSDK().then(() => {
+                startGame();
+            });
+        });
+    </script>
+</body>
+</html>`;
+  }
+
+  private generateCSS(gameConfig: any): string {
+    const primaryColor = gameConfig.graphics?.colorPalette?.[0] || '#3498db';
+    const secondaryColor = gameConfig.graphics?.colorPalette?.[1] || '#2ecc71';
+    const backgroundColor = gameConfig.graphics?.colorPalette?.[2] || '#2c3e50';
+    
+    return `
+/* Основные стили игры */
+body {
+    font-family: 'Arial', sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: ${backgroundColor};
+    color: white;
+    overflow: hidden;
+}
+
+#game-container {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+#gameCanvas {
+    border: 2px solid ${primaryColor};
+    border-radius: 8px;
+    background-color: #000;
+    max-width: 100%;
+    max-height: 100%;
+}
+
+/* UI элементы */
+#game-ui {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    z-index: 100;
+}
+
+#score-display, #lives-display, #level-display {
+    background-color: rgba(0, 0, 0, 0.7);
+    padding: 8px 16px;
+    margin: 4px 0;
+    border-radius: 4px;
+    font-weight: bold;
+    color: ${primaryColor};
+}
+
+/* Мобильное управление */
+.mobile-only {
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .mobile-only {
+        display: block;
+    }
+}
+
+#mobile-controls {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 20px;
+    z-index: 100;
+}
+
+.control-btn {
+    width: 60px;
+    height: 60px;
+    border: none;
+    border-radius: 50%;
+    background-color: ${primaryColor};
+    color: white;
+    font-size: 24px;
+    font-weight: bold;
+    cursor: pointer;
+    user-select: none;
+    touch-action: manipulation;
+    transition: all 0.2s ease;
+}
+
+.control-btn:active {
+    background-color: ${secondaryColor};
+    transform: scale(0.95);
+}
+
+/* Меню игры */
+.menu {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.8);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 200;
+}
+
+.menu-content {
+    background-color: ${backgroundColor};
+    padding: 40px;
+    border-radius: 12px;
+    text-align: center;
+    border: 2px solid ${primaryColor};
+}
+
+.menu-content h2 {
+    color: ${primaryColor};
+    margin-bottom: 20px;
+}
+
+.menu-content button {
+    background-color: ${primaryColor};
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    margin: 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s ease;
+}
+
+.menu-content button:hover {
+    background-color: ${secondaryColor};
+}
+
+/* Загрузочный экран */
+#loading-screen {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: ${backgroundColor};
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 300;
+}
+
+.loading-content {
+    text-align: center;
+}
+
+.loading-content h1 {
+    color: ${primaryColor};
+    margin-bottom: 30px;
+    font-size: 2.5em;
+}
+
+.loading-spinner {
+    width: 50px;
+    height: 50px;
+    border: 4px solid rgba(255, 255, 255, 0.3);
+    border-top: 4px solid ${primaryColor};
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 20px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.hidden {
+    display: none;
+}
+
+/* Адаптивность */
+@media (max-width: 768px) {
+    #game-ui {
+        top: 10px;
+        left: 10px;
+    }
+    
+    #score-display, #lives-display, #level-display {
+        padding: 6px 12px;
+        font-size: 14px;
+    }
+    
+    .menu-content {
+        padding: 20px;
+        margin: 20px;
+    }
+}
+`;
+  }
+
+  private async generateGameJavaScript(gameConfig: any): string {
+    // Базовый шаблон игры в зависимости от жанра
+    let baseTemplate = '';
+    
+    switch (gameConfig.genre) {
+      case 'platformer':
+        baseTemplate = await this.generatePlatformerGame(gameConfig);
+        break;
+      case 'puzzle':
+        baseTemplate = await this.generatePuzzleGame(gameConfig);
+        break;
+      case 'arcade':
+        baseTemplate = await this.generateArcadeGame(gameConfig);
+        break;
+      default:
+        baseTemplate = await this.generateGenericGame(gameConfig);
+    }
+    
+    return baseTemplate;
+  }
+
+  private async generatePlatformerGame(gameConfig: any): string {
+    const characterName = gameConfig.character?.name || 'Player';
+    const characterSpeed = gameConfig.mechanics?.controls?.includes('fast') ? 300 : 200;
+    const jumpPower = gameConfig.mechanics?.controls?.includes('high_jump') ? 600 : 450;
+    
+    return `
+// Платформер игра на основе интерактивных выборов
+class InteractivePlatformerGame {
+    constructor() {
+        this.canvas = document.getElementById('gameCanvas');
+        this.ctx = this.canvas.getContext('2d');
+        this.score = 0;
+        this.lives = 3;
+        this.level = 1;
+        this.gameState = 'playing'; // playing, paused, gameOver
+        
+        // Конфигурация из выборов пользователя
+        this.config = ${JSON.stringify(gameConfig, null, 8)};
+        
+        // Игрок
+        this.player = {
+            x: 50,
+            y: 400,
+            width: 32,
+            height: 48,
+            vx: 0,
+            vy: 0,
+            speed: ${characterSpeed},
+            jumpPower: ${jumpPower},
+            onGround: false,
+            color: '${gameConfig.character?.primaryColor || '#3498db'}'
+        };
+        
+        // Управление
+        this.keys = {};
+        this.mobileControls = {
+            left: false,
+            right: false,
+            jump: false
+        };
+        
+        // Игровые объекты
+        this.platforms = [];
+        this.enemies = [];
+        this.collectibles = [];
+        
+        this.setupControls();
+        this.createLevel();
+        this.gameLoop();
+    }
+    
+    setupControls() {
+        // Клавиатура
+        document.addEventListener('keydown', (e) => {
+            this.keys[e.code] = true;
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            this.keys[e.code] = false;
+        });
+        
+        // Мобильное управление
+        const leftBtn = document.getElementById('left-btn');
+        const rightBtn = document.getElementById('right-btn');
+        const jumpBtn = document.getElementById('jump-btn');
+        
+        if (leftBtn) {
+            leftBtn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                this.mobileControls.left = true;
+            });
+            leftBtn.addEventListener('touchend', () => {
+                this.mobileControls.left = false;
+            });
+        }
+        
+        if (rightBtn) {
+            rightBtn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                this.mobileControls.right = true;
+            });
+            rightBtn.addEventListener('touchend', () => {
+                this.mobileControls.right = false;
+            });
+        }
+        
+        if (jumpBtn) {
+            jumpBtn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                this.mobileControls.jump = true;
+            });
+            jumpBtn.addEventListener('touchend', () => {
+                this.mobileControls.jump = false;
+            });
+        }
+    }
+    
+    createLevel() {
+        // Создаем платформы на основе конфигурации уровня
+        this.platforms = [
+            { x: 0, y: 580, width: 800, height: 20 }, // Земля
+            { x: 200, y: 450, width: 150, height: 20 },
+            { x: 450, y: 350, width: 120, height: 20 },
+            { x: 650, y: 250, width: 100, height: 20 }
+        ];
+        
+        // Враги
+        this.enemies = [
+            { x: 300, y: 430, width: 30, height: 30, vx: -50, color: '#e74c3c' },
+            { x: 500, y: 330, width: 30, height: 30, vx: 50, color: '#e74c3c' }
+        ];
+        
+        // Коллектибли (монеты)
+        this.collectibles = [
+            { x: 250, y: 400, width: 20, height: 20, collected: false },
+            { x: 500, y: 300, width: 20, height: 20, collected: false },
+            { x: 700, y: 200, width: 20, height: 20, collected: false }
+        ];
+    }
+    
+    update(deltaTime) {
+        if (this.gameState !== 'playing') return;
+        
+        // Обновляем игрока
+        this.updatePlayer(deltaTime);
+        
+        // Обновляем врагов
+        this.updateEnemies(deltaTime);
+        
+        // Проверяем коллизии
+        this.checkCollisions();
+        
+        // Проверяем условия победы/поражения
+        this.checkGameState();
+    }
+    
+    updatePlayer(deltaTime) {
+        const dt = deltaTime / 1000;
+        
+        // Горизонтальное движение
+        if (this.keys['ArrowLeft'] || this.keys['KeyA'] || this.mobileControls.left) {
+            this.player.vx = -this.player.speed;
+        } else if (this.keys['ArrowRight'] || this.keys['KeyD'] || this.mobileControls.right) {
+            this.player.vx = this.player.speed;
+        } else {
+            this.player.vx *= 0.8; // Торможение
+        }
+        
+        // Прыжок
+        if ((this.keys['ArrowUp'] || this.keys['KeyW'] || this.keys['Space'] || this.mobileControls.jump) && this.player.onGround) {
+            this.player.vy = -this.player.jumpPower;
+            this.player.onGround = false;
+        }
+        
+        // Гравитация
+        this.player.vy += 800 * dt; // Ускорение свободного падения
+        
+        // Обновляем позицию
+        this.player.x += this.player.vx * dt;
+        this.player.y += this.player.vy * dt;
+        
+        // Ограничения экрана
+        if (this.player.x < 0) this.player.x = 0;
+        if (this.player.x + this.player.width > this.canvas.width) {
+            this.player.x = this.canvas.width - this.player.width;
+        }
+        
+        // Смерть от падения
+        if (this.player.y > this.canvas.height) {
+            this.loseLife();
+        }
+    }
+    
+    updateEnemies(deltaTime) {
+        const dt = deltaTime / 1000;
+        
+        this.enemies.forEach(enemy => {
+            enemy.x += enemy.vx * dt;
+            
+            // Отражение от краев платформ
+            if (enemy.x <= 0 || enemy.x + enemy.width >= this.canvas.width) {
+                enemy.vx *= -1;
+            }
+        });
+    }
+    
+    checkCollisions() {
+        // Коллизии с платформами
+        this.player.onGround = false;
+        
+        this.platforms.forEach(platform => {
+            if (this.isColliding(this.player, platform)) {
+                // Игрок сверху платформы
+                if (this.player.vy > 0 && this.player.y < platform.y) {
+                    this.player.y = platform.y - this.player.height;
+                    this.player.vy = 0;
+                    this.player.onGround = true;
+                }
+            }
+        });
+        
+        // Коллизии с врагами
+        this.enemies.forEach(enemy => {
+            if (this.isColliding(this.player, enemy)) {
+                this.loseLife();
+            }
+        });
+        
+        // Коллизии с коллектиблями
+        this.collectibles.forEach(item => {
+            if (!item.collected && this.isColliding(this.player, item)) {
+                item.collected = true;
+                this.score += 100;
+                this.updateUI();
+            }
+        });
+    }
+    
+    isColliding(rect1, rect2) {
+        return rect1.x < rect2.x + rect2.width &&
+               rect1.x + rect1.width > rect2.x &&
+               rect1.y < rect2.y + rect2.height &&
+               rect1.y + rect1.height > rect2.y;
+    }
+    
+    loseLife() {
+        this.lives--;
+        this.updateUI();
+        
+        if (this.lives <= 0) {
+            this.gameOver();
+        } else {
+            // Респавн
+            this.player.x = 50;
+            this.player.y = 400;
+            this.player.vx = 0;
+            this.player.vy = 0;
+        }
+    }
+    
+    gameOver() {
+        this.gameState = 'gameOver';
+        document.getElementById('final-score').textContent = this.score;
+        document.getElementById('game-menu').classList.remove('hidden');
+    }
+    
+    checkGameState() {
+        // Победа - собрали все коллектибли
+        const allCollected = this.collectibles.every(item => item.collected);
+        if (allCollected) {
+            this.level++;
+            this.createLevel(); // Создаем новый уровень
+            this.updateUI();
+        }
+    }
+    
+    render() {
+        // Очищаем экран
+        this.ctx.fillStyle = '${gameConfig.graphics?.colorPalette?.[2] || '#1a1a2e'}';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        
+        // Рисуем платформы
+        this.ctx.fillStyle = '${gameConfig.graphics?.colorPalette?.[1] || '#2ecc71'}';
+        this.platforms.forEach(platform => {
+            this.ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
+        });
+        
+        // Рисуем игрока
+        this.ctx.fillStyle = this.player.color;
+        this.ctx.fillRect(this.player.x, this.player.y, this.player.width, this.player.height);
+        
+        // Рисуем врагов
+        this.enemies.forEach(enemy => {
+            this.ctx.fillStyle = enemy.color;
+            this.ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
+        });
+        
+        // Рисуем коллектибли
+        this.ctx.fillStyle = '${gameConfig.graphics?.colorPalette?.[3] || '#f1c40f'}';
+        this.collectibles.forEach(item => {
+            if (!item.collected) {
+                this.ctx.fillRect(item.x, item.y, item.width, item.height);
+            }
+        });
+    }
+    
+    updateUI() {
+        document.getElementById('score').textContent = this.score;
+        document.getElementById('lives').textContent = this.lives;
+        document.getElementById('level').textContent = this.level;
+    }
+    
+    gameLoop() {
+        const now = performance.now();
+        const deltaTime = now - (this.lastTime || now);
+        this.lastTime = now;
+        
+        this.update(deltaTime);
+        this.render();
+        
+        requestAnimationFrame(() => this.gameLoop());
+    }
+    
+    restart() {
+        this.score = 0;
+        this.lives = 3;
+        this.level = 1;
+        this.gameState = 'playing';
+        
+        this.player.x = 50;
+        this.player.y = 400;
+        this.player.vx = 0;
+        this.player.vy = 0;
+        
+        this.createLevel();
+        this.updateUI();
+        document.getElementById('game-menu').classList.add('hidden');
+    }
+}
+
+// Глобальная переменная игры
+let game;
+
+// Функция запуска игры
+function startGame() {
+    document.getElementById('loading-screen').classList.add('hidden');
+    game = new InteractivePlatformerGame();
+    
+    // Обработчики кнопок меню
+    document.getElementById('restart-btn').addEventListener('click', () => {
+        game.restart();
+    });
+    
+    document.getElementById('share-btn').addEventListener('click', () => {
+        if (window.yandexSDK) {
+            window.yandexSDK.shareScore(game.score);
+        }
+    });
+}
+
+// Yandex SDK инициализация
+async function initializeYandexSDK() {
+    try {
+        if (typeof YaGames !== 'undefined') {
+            window.yandexSDK = await YaGames.init();
+            console.log('Yandex SDK готов');
+        } else {
+            console.log('Yandex SDK не найден, запуск в режиме разработки');
+        }
+    } catch (error) {
+        console.warn('Ошибка инициализации Yandex SDK:', error);
+    }
+}
+`;
+  }
+
+  private async generatePuzzleGame(gameConfig: any): string {
+    return '/* Puzzle game implementation */';
+  }
+
+  private async generateArcadeGame(gameConfig: any): string {
+    return '/* Arcade game implementation */';
+  }
+
+  private async generateGenericGame(gameConfig: any): string {
+    return '/* Generic game implementation */';
+  }
+
+  private generateCharacterCode(character: any): string {
+    return `
+// Код персонажа: ${character.name}
+class Character {
+    constructor() {
+        this.name = '${character.name}';
+        this.description = '${character.description}';
+        this.abilities = ${JSON.stringify(character.abilities || [])};
+        this.primaryColor = '${character.primaryColor}';
+        this.style = '${character.style}';
+    }
+    
+    // Логика персонажа
+    update(deltaTime) {
+        // Обновление персонажа
+    }
+    
+    render(ctx, x, y) {
+        // Отрисовка персонажа
+        ctx.fillStyle = this.primaryColor;
+        ctx.fillRect(x, y, 32, 48);
+    }
+}
+`;
+  }
+
+  private generateLevelCode(level: any, levelNumber: number): string {
+    return `
+// Уровень ${levelNumber}: ${level.theme || 'Обычный уровень'}
+class Level${levelNumber} {
+    constructor() {
+        this.theme = '${level.theme || 'default'}';
+        this.layout = '${level.layout || 'horizontal'}';
+        this.obstacles = ${JSON.stringify(level.obstacles || [])};
+        this.collectibles = ${JSON.stringify(level.collectibles || [])};
+        this.enemies = ${JSON.stringify(level.enemies || [])};
+        this.size = ${JSON.stringify(level.size || { width: 800, height: 600 })};
+    }
+    
+    // Создание уровня
+    create() {
+        return {
+            platforms: this.generatePlatforms(),
+            enemies: this.generateEnemies(),
+            collectibles: this.generateCollectibles()
+        };
+    }
+    
+    generatePlatforms() {
+        // Генерация платформ на основе layout
+        return [
+            { x: 0, y: 580, width: 800, height: 20 },
+            { x: 200, y: 450, width: 150, height: 20 },
+            { x: 450, y: 350, width: 120, height: 20 }
+        ];
+    }
+    
+    generateEnemies() {
+        return this.enemies.map((enemyType, index) => ({
+            x: 200 + index * 200,
+            y: 400,
+            type: enemyType,
+            width: 30,
+            height: 30
+        }));
+    }
+    
+    generateCollectibles() {
+        return this.collectibles.map((itemType, index) => ({
+            x: 150 + index * 150,
+            y: 350,
+            type: itemType,
+            width: 20,
+            height: 20,
+            collected: false
+        }));
+    }
+}
+`;
+  }
+
+  private async createGameStructure(outputDir: string, files: Record<string, string>): Promise<void> {
+    // Создаем основные файлы
+    for (const [filename, content] of Object.entries(files)) {
+      await fs.writeFile(path.join(outputDir, filename), content);
+    }
+    
+    // Создаем папки для ассетов
+    await fs.mkdir(path.join(outputDir, 'assets'), { recursive: true });
+    await fs.mkdir(path.join(outputDir, 'assets', 'images'), { recursive: true });
+    await fs.mkdir(path.join(outputDir, 'assets', 'sounds'), { recursive: true });
+  }
+
+  private async generateYandexIntegration(outputDir: string, gameConfig: any): Promise<void> {
+    const yandexConfig = {
+      leaderboards: true,
+      advertising: {
+        rewarded: true,
+        interstitial: true,
+        sticky: true
+      },
+      achievements: true,
+      social: true
+    };
+
+    // Импортируем YandexSDKIntegrator
+    const { YandexSDKIntegrator } = await import('../yandex-sdk/integration');
+    const sdkCode = YandexSDKIntegrator.generateSDKIntegration(yandexConfig);
+    
+    await fs.writeFile(path.join(outputDir, 'yandex-sdk.js'), sdkCode);
+  }
+
+  private async createGameManifest(outputDir: string, gameConfig: any): Promise<void> {
+    const manifest = {
+      name: gameConfig.title || 'Интерактивная игра',
+      version: '1.0.0',
+      description: `Игра созданная интерактивно с жанром ${gameConfig.genre}`,
+      author: 'GameIDE Interactive Generator',
+      main: 'index.html',
+      yandex: {
+        sdk_version: '2.0.0',
+        orientation: 'landscape'
+      },
+      files: [
+        'index.html',
+        'styles.css', 
+        'game.js',
+        'config.json',
+        'yandex-sdk.js'
+      ]
+    };
+
+    await fs.writeFile(path.join(outputDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
+  }
+
+  private async createFallbackGame(outputDir: string, state: InteractiveGenerationState): Promise<void> {
     const indexHtml = `
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Сгенерированная игра</title>
+    <title>Интерактивная игра</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #2c3e50; color: white; }
+        .game-container { max-width: 600px; margin: 0 auto; }
+        .choices { text-align: left; margin: 20px 0; }
+    </style>
 </head>
 <body>
-    <h1>Игра создана интерактивно!</h1>
-    <p>Выборы пользователя: ${JSON.stringify(state.finalChoices, null, 2)}</p>
+    <div class="game-container">
+        <h1>🎮 Ваша интерактивная игра готова!</h1>
+        <p>Игра была создана на основе ваших выборов:</p>
+        
+        <div class="choices">
+            <h3>Выборы пользователя:</h3>
+            <pre>${JSON.stringify(state.finalChoices, null, 2)}</pre>
+        </div>
+        
+        <p><em>Простая демо-версия игры. Полная реализация будет доступна после завершения разработки всех компонентов.</em></p>
+        
+        <button onclick="alert('Игра в разработке!')" style="padding: 10px 20px; font-size: 16px; background: #3498db; color: white; border: none; border-radius: 5px; cursor: pointer;">
+            Играть
+        </button>
+    </div>
 </body>
-</html>
-    `;
+</html>`;
 
     await fs.writeFile(path.join(outputDir, 'index.html'), indexHtml);
-
-    return outputDir;
-  }
-
-  private parseJSONResponse(response: string): any {
-    try {
-      // Пытаемся найти JSON в ответе
-      const jsonMatch = response.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]);
-      }
-      
-      // Если JSON не найден, пытаемся парсить весь ответ
-      return JSON.parse(response);
-    } catch (error) {
-      this.logger.warn('Не удалось распарсить JSON ответ:', response);
-      return {};
-    }
-  }
-
-  private async createStepsFromConfig(
-    config: InteractiveStepConfig, 
-    request: InteractiveGameRequest,
-    gameConfig?: GameConfiguration
-  ): Promise<InteractiveStep[]> {
-    return config.steps.map((stepGuide, index) => ({
-      stepId: uuidv4(),
-      name: stepGuide.title,
-      description: stepGuide.description,
-      type: stepGuide.stepType as StepType,
-      variants: [],
-      isCompleted: false,
-      isSkippable: stepGuide.stepType !== 'character' // Персонаж обязателен
-    }));
-  }
-
-  private initializeStepConfigs(): void {
-    // Конфигурация для платформера
-    this.stepConfigs.set('platformer', {
-      genre: 'platformer',
-      steps: [
-        {
-          stepType: 'character',
-          title: 'Персонаж',
-          description: 'Выберите главного героя вашей игры',
-          aiGenerationPrompt: 'Создай персонажа для платформера'
-        },
-        {
-          stepType: 'mechanics',
-          title: 'Механики',
-          description: 'Определите основные игровые механики',
-          aiGenerationPrompt: 'Создай механики для платформера'
-        },
-        {
-          stepType: 'levels',
-          title: 'Уровни',
-          description: 'Спроектируйте уровни игры',
-          aiGenerationPrompt: 'Создай дизайн уровней для платформера'
-        },
-        {
-          stepType: 'graphics',
-          title: 'Графика',
-          description: 'Выберите визуальный стиль',
-          aiGenerationPrompt: 'Создай графический стиль для платформера'
-        },
-        {
-          stepType: 'sounds',
-          title: 'Звуки',
-          description: 'Подберите музыку и звуковые эффекты',
-          aiGenerationPrompt: 'Создай звуковой дизайн для платформера'
-        }
-      ]
-    });
-
-    // Конфигурация для аркады
-    this.stepConfigs.set('arcade', {
-      genre: 'arcade',
-      steps: [
-        {
-          stepType: 'character',
-          title: 'Игровой объект',
-          description: 'Главный элемент аркадной игры',
-          aiGenerationPrompt: 'Создай игровой объект для аркады'
-        },
-        {
-          stepType: 'mechanics',
-          title: 'Механики',
-          description: 'Простые и захватывающие правила',
-          aiGenerationPrompt: 'Создай простые аркадные механики'
-        },
-        {
-          stepType: 'graphics',
-          title: 'Графика',
-          description: 'Яркий визуальный стиль',
-          aiGenerationPrompt: 'Создай яркую аркадную графику'
-        },
-        {
-          stepType: 'sounds',
-          title: 'Звуки',
-          description: 'Динамичные звуки и музыка',
-          aiGenerationPrompt: 'Создай энергичный звуковой дизайн'
-        }
-      ]
-    });
-
-    // Конфигурация для головоломок
-    this.stepConfigs.set('puzzle', {
-      genre: 'puzzle',
-      steps: [
-        {
-          stepType: 'mechanics',
-          title: 'Правила головоломки',
-          description: 'Логика и правила решения',
-          aiGenerationPrompt: 'Создай правила для головоломки'
-        },
-        {
-          stepType: 'levels',
-          title: 'Уровни сложности',
-          description: 'Прогрессия сложности',
-          aiGenerationPrompt: 'Создай уровни головоломки'
-        },
-        {
-          stepType: 'graphics',
-          title: 'Интерфейс',
-          description: 'Понятный и удобный интерфейс',
-          aiGenerationPrompt: 'Создай интерфейс головоломки'
-        }
-      ]
-    });
-
-    // Конфигурация для экшена
-    this.stepConfigs.set('action', {
-      genre: 'action',
-      steps: [
-        {
-          stepType: 'character',
-          title: 'Герой',
-          description: 'Боевой персонаж с навыками',
-          aiGenerationPrompt: 'Создай боевого персонажа'
-        },
-        {
-          stepType: 'mechanics',
-          title: 'Боевая система',
-          description: 'Атаки, защита, комбо',
-          aiGenerationPrompt: 'Создай боевую систему'
-        },
-        {
-          stepType: 'levels',
-          title: 'Арены и уровни',
-          description: 'Места для сражений',
-          aiGenerationPrompt: 'Создай боевые арены'
-        },
-        {
-          stepType: 'graphics',
-          title: 'Визуальные эффекты',
-          description: 'Эффекты атак и способностей',
-          aiGenerationPrompt: 'Создай боевые эффекты'
-        },
-        {
-          stepType: 'sounds',
-          title: 'Звуки сражений',
-          description: 'Звуки ударов и способностей',
-          aiGenerationPrompt: 'Создай звуки сражений'
-        }
-      ]
-    });
-
-    // Конфигурация для RPG
-    this.stepConfigs.set('rpg', {
-      genre: 'rpg',
-      steps: [
-        {
-          stepType: 'character',
-          title: 'Персонаж и классы',
-          description: 'Герой с характеристиками',
-          aiGenerationPrompt: 'Создай RPG персонажа'
-        },
-        {
-          stepType: 'mechanics',
-          title: 'Система прогрессии',
-          description: 'Уровни, навыки, экипировка',
-          aiGenerationPrompt: 'Создай систему развития'
-        },
-        {
-          stepType: 'levels',
-          title: 'Мир и квесты',
-          description: 'Локации и задания',
-          aiGenerationPrompt: 'Создай игровой мир'
-        },
-        {
-          stepType: 'graphics',
-          title: 'Художественный стиль',
-          description: 'Стиль фэнтези или sci-fi',
-          aiGenerationPrompt: 'Создай атмосферную графику'
-        },
-        {
-          stepType: 'sounds',
-          title: 'Музыка и звуки',
-          description: 'Атмосферная музыка',
-          aiGenerationPrompt: 'Создай эпическую музыку'
-        }
-      ]
-    });
-
-    // Конфигурация для стратегии
-    this.stepConfigs.set('strategy', {
-      genre: 'strategy',
-      steps: [
-        {
-          stepType: 'mechanics',
-          title: 'Стратегические правила',
-          description: 'Ресурсы, юниты, здания',
-          aiGenerationPrompt: 'Создай стратегические механики'
-        },
-        {
-          stepType: 'levels',
-          title: 'Карты и сценарии',
-          description: 'Поля сражений',
-          aiGenerationPrompt: 'Создай стратегические карты'
-        },
-        {
-          stepType: 'graphics',
-          title: 'Интерфейс управления',
-          description: 'Удобное управление войсками',
-          aiGenerationPrompt: 'Создай стратегический интерфейс'
-        }
-      ]
-    });
-  }
-
-  private getDefaultStepConfig(): InteractiveStepConfig {
-    return {
-      genre: 'default',
-      steps: [
-        {
-          stepType: 'character',
-          title: 'Персонаж',
-          description: 'Выберите главного героя',
-          aiGenerationPrompt: 'Создай игрового персонажа'
-        },
-        {
-          stepType: 'mechanics',
-          title: 'Механики',
-          description: 'Основные правила игры',
-          aiGenerationPrompt: 'Создай игровые механики'
-        },
-        {
-          stepType: 'graphics',
-          title: 'Графика',
-          description: 'Визуальный стиль',
-          aiGenerationPrompt: 'Создай графический стиль'
-        }
-      ]
-    };
   }
 } 

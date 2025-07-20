@@ -3,6 +3,10 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import { logger } from './logger';
 import { analyticsService } from './analytics';
+import { AnalyticsService, AnalyticsEvent, UserSession } from './analytics';
+import { OpenAIService } from './ai/openai';
+import { ClaudeService } from './ai/claude';
+import { v4 as uuidv4 } from 'uuid';
 
 export interface AnalyticsMetric {
   id: string;
@@ -149,1601 +153,1112 @@ export interface CohortAnalysis {
   insights: string[];
 }
 
-class AdvancedAnalyticsService extends EventEmitter {
-  private metrics: Map<string, AnalyticsMetric[]> = new Map();
-  private reports: Map<string, AnalyticsReport> = new Map();
-  private segments: Map<string, UserSegment> = new Map();
-  private alerts: Map<string, PerformanceAlert> = new Map();
-  private funnels: Map<string, FunnelAnalysis> = new Map();
+interface PredictiveModel {
+  id: string;
+  name: string;
+  type: 'classification' | 'regression' | 'clustering' | 'time_series';
+  description: string;
+  features: string[];
+  targetVariable: string;
+  algorithm: string;
+  accuracy: number;
+  trainingData: any[];
+  modelParams: any;
+  lastTrained: Date;
+  isActive: boolean;
+}
+
+interface Prediction {
+  id: string;
+  modelId: string;
+  userId?: string;
+  sessionId?: string;
+  prediction: any;
+  confidence: number;
+  features: Record<string, any>;
+  timestamp: Date;
+  actualOutcome?: any;
+  accuracy?: number;
+}
+
+interface UserInsight {
+  userId: string;
+  segments: string[];
+  ltv: number; // Lifetime Value
+  churnProbability: number;
+  nextBestAction: string;
+  engagementScore: number;
+  personalizedRecommendations: string[];
+  riskFactors: string[];
+  opportunities: string[];
+  behaviorPattern: 'new_user' | 'active_user' | 'power_user' | 'at_risk' | 'churned';
+}
+
+interface AnomalyDetection {
+  id: string;
+  type: 'metric_spike' | 'metric_drop' | 'unusual_pattern' | 'fraud_detection';
+  metric: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  detectedAt: Date;
+  description: string;
+  expectedValue: number;
+  actualValue: number;
+  deviation: number;
+  possibleCauses: string[];
+  recommendedActions: string[];
+  autoResolved: boolean;
+}
+
+interface IntelligentInsight {
+  id: string;
+  type: 'opportunity' | 'warning' | 'trend' | 'recommendation';
+  title: string;
+  description: string;
+  impact: 'low' | 'medium' | 'high';
+  confidence: number;
+  data: any;
+  actionable: boolean;
+  suggestedActions: string[];
+  createdAt: Date;
+  relevantFor: string[]; // user segments or roles
+}
+
+interface ABTestOptimization {
+  testId: string;
+  optimizations: {
+    trafficAllocation: number;
+    segmentFilters: string[];
+    expectedImprovement: number;
+    riskAssessment: string;
+  };
+  personalizedVariants: {
+    segment: string;
+    variantId: string;
+    reasoningScore: number;
+  }[];
+}
+
+export class AdvancedAnalyticsService extends EventEmitter {
+  private analyticsService: AnalyticsService;
+  private openaiService: OpenAIService;
+  private claudeService: ClaudeService;
+  private models: Map<string, PredictiveModel> = new Map();
+  private predictions: Map<string, Prediction[]> = new Map();
+  private userInsights: Map<string, UserInsight> = new Map();
   private cohorts: Map<string, CohortAnalysis> = new Map();
+  private anomalies: AnomalyDetection[] = [];
+  private insights: IntelligentInsight[] = [];
 
-  // Кэш для быстрого доступа
-  private metricCache: Map<string, any> = new Map();
-  private chartCache: Map<string, ChartData> = new Map();
-
-  constructor() {
+  constructor(analyticsService: AnalyticsService) {
     super();
-    this.initializeMetrics();
-    this.startPeriodicAnalysis();
+    this.analyticsService = analyticsService;
+    this.openaiService = new OpenAIService();
+    this.claudeService = new ClaudeService();
+    
+    this.initializePredictiveModels();
+    this.setupRealTimeAnalysis();
   }
 
-  // Сбор и анализ метрик
-  public async collectMetrics(source: 'games' | 'users' | 'system' | 'custom', data: any[]): Promise<void> {
+  // Инициализация предиктивных моделей
+  private initializePredictiveModels(): void {
+    const defaultModels: PredictiveModel[] = [
+      {
+        id: 'churn_prediction',
+        name: 'Предсказание оттока пользователей',
+        type: 'classification',
+        description: 'Модель для предсказания вероятности ухода пользователя',
+        features: ['session_frequency', 'avg_session_duration', 'games_created', 'last_activity_days', 'engagement_score'],
+        targetVariable: 'will_churn',
+        algorithm: 'gradient_boosting',
+        accuracy: 0.85,
+        trainingData: [],
+        modelParams: {
+          maxDepth: 10,
+          learningRate: 0.1,
+          nEstimators: 100
+        },
+        lastTrained: new Date(),
+        isActive: true
+      },
+      {
+        id: 'ltv_prediction',
+        name: 'Предсказание жизненной ценности пользователя',
+        type: 'regression',
+        description: 'Модель для предсказания LTV пользователя',
+        features: ['registration_days', 'total_sessions', 'games_created', 'avg_session_duration', 'purchases_count'],
+        targetVariable: 'lifetime_value',
+        algorithm: 'random_forest',
+        accuracy: 0.78,
+        trainingData: [],
+        modelParams: {
+          nEstimators: 150,
+          maxFeatures: 'sqrt'
+        },
+        lastTrained: new Date(),
+        isActive: true
+      },
+      {
+        id: 'conversion_prediction',
+        name: 'Предсказание конверсии',
+        type: 'classification',
+        description: 'Модель для предсказания вероятности покупки',
+        features: ['page_views', 'time_on_site', 'feature_usage', 'referrer_type', 'device_type'],
+        targetVariable: 'will_convert',
+        algorithm: 'logistic_regression',
+        accuracy: 0.72,
+        trainingData: [],
+        modelParams: {
+          regularization: 'l2',
+          C: 1.0
+        },
+        lastTrained: new Date(),
+        isActive: true
+      },
+      {
+        id: 'game_success_prediction',
+        name: 'Предсказание успешности игры',
+        type: 'classification',
+        description: 'Модель для предсказания популярности создаваемой игры',
+        features: ['game_type', 'complexity', 'creation_time', 'user_skill_level', 'market_trends'],
+        targetVariable: 'will_be_popular',
+        algorithm: 'neural_network',
+        accuracy: 0.68,
+        trainingData: [],
+        modelParams: {
+          hiddenLayers: [64, 32, 16],
+          activation: 'relu',
+          dropout: 0.2
+        },
+        lastTrained: new Date(),
+        isActive: true
+      },
+      {
+        id: 'user_segmentation',
+        name: 'Сегментация пользователей',
+        type: 'clustering',
+        description: 'Модель для автоматической сегментации пользователей',
+        features: ['session_count', 'games_created', 'engagement_score', 'spending', 'feature_usage_vector'],
+        targetVariable: 'segment',
+        algorithm: 'kmeans',
+        accuracy: 0.75,
+        trainingData: [],
+        modelParams: {
+          nClusters: 5,
+          maxIter: 300
+        },
+        lastTrained: new Date(),
+        isActive: true
+      }
+    ];
+
+    defaultModels.forEach(model => {
+      this.models.set(model.id, model);
+    });
+
+    logger.info('Инициализированы предиктивные модели', { count: defaultModels.length });
+  }
+
+  // Настройка анализа в реальном времени
+  private setupRealTimeAnalysis(): void {
+    // Слушаем события аналитики
+    this.analyticsService.on('event_tracked', (event: AnalyticsEvent) => {
+      this.processEventForPredictions(event);
+      this.detectAnomalies(event);
+    });
+
+    // Периодический анализ
+    setInterval(() => {
+      this.performPeriodicAnalysis();
+    }, 60 * 60 * 1000); // Каждый час
+
+    // Обновление инсайтов каждые 6 часов
+    setInterval(() => {
+      this.generateIntelligentInsights();
+    }, 6 * 60 * 60 * 1000);
+
+    // Обучение моделей каждые 24 часа
+    setInterval(() => {
+      this.retrainModels();
+    }, 24 * 60 * 60 * 1000);
+  }
+
+  // Обработка события для предсказаний
+  private async processEventForPredictions(event: AnalyticsEvent): Promise<void> {
     try {
-      const timestamp = new Date();
-      const metrics: AnalyticsMetric[] = [];
-
-      switch (source) {
-        case 'games':
-          metrics.push(...this.analyzeGameMetrics(data, timestamp));
-          break;
-        case 'users':
-          metrics.push(...this.analyzeUserMetrics(data, timestamp));
-          break;
-        case 'system':
-          metrics.push(...this.analyzeSystemMetrics(data, timestamp));
-          break;
-        case 'custom':
-          metrics.push(...this.analyzeCustomMetrics(data, timestamp));
-          break;
+      if (event.userId) {
+        // Обновляем инсайты пользователя
+        await this.updateUserInsights(event.userId);
+        
+        // Делаем предсказания
+        await this.makePredictions(event.userId, event.sessionId);
       }
 
-      // Сохраняем метрики
-      for (const metric of metrics) {
-        const existing = this.metrics.get(metric.id) || [];
-        existing.push(metric);
-        
-        // Храним только последние 10000 точек для каждой метрики
-        if (existing.length > 10000) {
-          existing.splice(0, existing.length - 10000);
-        }
-        
-        this.metrics.set(metric.id, existing);
+      // Проверяем необходимость обновления когорт
+      if (event.eventName === 'user_registered') {
+        await this.updateCohortAnalysis(event.userId);
       }
-
-      // Проверяем алерты
-      await this.checkAlerts(metrics);
-
-      // Обновляем кэш
-      this.updateMetricCache();
-
-      this.emit('metricsCollected', { source, count: metrics.length, timestamp });
-      logger.info(`Collected ${metrics.length} metrics from ${source}`);
-
     } catch (error) {
-      logger.error('Error collecting metrics:', error);
-      throw error;
+      logger.error('Ошибка обработки события для предсказаний', { error, eventId: event.id });
     }
   }
 
-  // Генерация отчетов
-  public async generateReport(config: {
-    title: string;
-    type: AnalyticsReport['type'];
-    dateRange: AnalyticsReport['dateRange'];
-    metrics: string[];
-    includeCharts?: boolean;
-    includeInsights?: boolean;
-    includeComparison?: boolean;
-    format?: AnalyticsReport['format'];
-  }): Promise<AnalyticsReport> {
-    try {
-      const reportId = this.generateReportId();
+  // Создание предсказаний
+  async makePredictions(userId: string, sessionId?: string): Promise<Prediction[]> {
+    const predictions: Prediction[] = [];
+
+    for (const model of this.models.values()) {
+      if (!model.isActive) continue;
+
+      try {
+        const features = await this.extractFeatures(userId, model.features);
+        const prediction = await this.runModel(model, features);
+
+        const predictionRecord: Prediction = {
+          id: uuidv4(),
+          modelId: model.id,
+          userId,
+          sessionId,
+          prediction: prediction.value,
+          confidence: prediction.confidence,
+          features,
+          timestamp: new Date()
+        };
+
+        predictions.push(predictionRecord);
+
+        // Сохраняем предсказание
+        const userPredictions = this.predictions.get(userId) || [];
+        userPredictions.push(predictionRecord);
+        this.predictions.set(userId, userPredictions);
+
+        logger.info('Создано предсказание', { 
+          modelId: model.id, 
+          userId, 
+          prediction: prediction.value,
+          confidence: prediction.confidence 
+        });
+      } catch (error) {
+        logger.error('Ошибка создания предсказания', { error, modelId: model.id, userId });
+      }
+    }
+
+    return predictions;
+  }
+
+  // Извлечение признаков для модели
+  private async extractFeatures(userId: string, requiredFeatures: string[]): Promise<Record<string, any>> {
+    const features: Record<string, any> = {};
+    
+    // Получаем данные пользователя из аналитики
+    const userSessions = Array.from(this.analyticsService['sessions'].values())
+      .filter(session => session.userId === userId);
+    
+    const userEvents = Array.from(this.analyticsService['events'].values())
+      .flat()
+      .filter(event => event.userId === userId);
+
+    for (const feature of requiredFeatures) {
+      switch (feature) {
+        case 'session_frequency':
+          const last30Days = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+          const recentSessions = userSessions.filter(s => s.startTime >= last30Days);
+          features[feature] = recentSessions.length / 30;
+          break;
+
+        case 'avg_session_duration':
+          const avgDuration = userSessions.length > 0 
+            ? userSessions.reduce((sum, s) => sum + (s.duration || 0), 0) / userSessions.length
+            : 0;
+          features[feature] = avgDuration;
+          break;
+
+        case 'games_created':
+          features[feature] = userEvents.filter(e => e.eventName === 'game_created').length;
+          break;
+
+        case 'last_activity_days':
+          const lastSession = userSessions.sort((a, b) => b.lastActivity.getTime() - a.lastActivity.getTime())[0];
+          const daysSinceLastActivity = lastSession 
+            ? (Date.now() - lastSession.lastActivity.getTime()) / (24 * 60 * 60 * 1000)
+            : 999;
+          features[feature] = daysSinceLastActivity;
+          break;
+
+        case 'engagement_score':
+          features[feature] = await this.calculateEngagementScore(userId);
+          break;
+
+        case 'total_sessions':
+          features[feature] = userSessions.length;
+          break;
+
+        case 'purchases_count':
+          features[feature] = userEvents.filter(e => e.eventName === 'payment_completed').length;
+          break;
+
+        case 'page_views':
+          features[feature] = userEvents.filter(e => e.eventType === 'page_view').length;
+          break;
+
+        case 'time_on_site':
+          features[feature] = userSessions.reduce((sum, s) => sum + (s.duration || 0), 0);
+          break;
+
+        default:
+          features[feature] = 0; // Дефолтное значение
+      }
+    }
+
+    return features;
+  }
+
+  // Запуск модели (упрощенная версия)
+  private async runModel(model: PredictiveModel, features: Record<string, any>): Promise<{ value: any; confidence: number }> {
+    // В реальной реализации здесь был бы вызов ML библиотеки
+    // Для демонстрации используем упрощенную логику
+    
+    let prediction: any;
+    let confidence: number;
+
+    switch (model.type) {
+      case 'classification':
+        // Логистическая регрессия или градиентный бустинг
+        const score = this.calculateClassificationScore(features, model);
+        prediction = score > 0.5 ? 1 : 0;
+        confidence = Math.abs(score - 0.5) * 2;
+        break;
+
+      case 'regression':
+        // Линейная регрессия или случайный лес
+        prediction = this.calculateRegressionValue(features, model);
+        confidence = Math.min(0.95, Math.max(0.5, model.accuracy));
+        break;
+
+      case 'clustering':
+        // K-means или другие алгоритмы кластеризации
+        prediction = this.assignCluster(features, model);
+        confidence = 0.8;
+        break;
+
+      default:
+        prediction = 0;
+        confidence = 0.5;
+    }
+
+    return { value: prediction, confidence };
+  }
+
+  // Вспомогательные методы для моделей
+  private calculateClassificationScore(features: Record<string, any>, model: PredictiveModel): number {
+    // Упрощенная логика классификации
+    let score = 0.5;
+    
+    if (model.id === 'churn_prediction') {
+      const lastActivityDays = features.last_activity_days || 0;
+      const sessionFreq = features.session_frequency || 0;
+      const engagementScore = features.engagement_score || 0;
       
-      // Получаем метрики за указанный период
-      const reportMetrics = await this.getMetricsForPeriod(
-        config.metrics,
-        config.dateRange.start,
-        config.dateRange.end
+      score = 1 / (1 + Math.exp(-(
+        -2 + 
+        lastActivityDays * 0.1 - 
+        sessionFreq * 0.5 - 
+        engagementScore * 0.3
+      )));
+    } else if (model.id === 'conversion_prediction') {
+      const pageViews = features.page_views || 0;
+      const timeOnSite = features.time_on_site || 0;
+      
+      score = 1 / (1 + Math.exp(-(
+        -3 + 
+        Math.log(pageViews + 1) * 0.5 +
+        Math.log(timeOnSite + 1) * 0.3
+      )));
+    }
+
+    return Math.max(0, Math.min(1, score));
+  }
+
+  private calculateRegressionValue(features: Record<string, any>, model: PredictiveModel): number {
+    if (model.id === 'ltv_prediction') {
+      const sessions = features.total_sessions || 0;
+      const gamesCreated = features.games_created || 0;
+      const purchases = features.purchases_count || 0;
+      
+      return Math.max(0, 
+        sessions * 0.5 + 
+        gamesCreated * 2.0 + 
+        purchases * 50.0 +
+        Math.random() * 10 // Добавляем шум
       );
+    }
+    
+    return Math.random() * 100;
+  }
 
-      // Генерируем графики
-      const charts: ChartData[] = [];
-      if (config.includeCharts) {
-        charts.push(...await this.generateChartsForMetrics(reportMetrics, config.dateRange));
-      }
+  private assignCluster(features: Record<string, any>, model: PredictiveModel): string {
+    // Упрощенная кластеризация
+    const engagementScore = features.engagement_score || 0;
+    const gamesCreated = features.games_created || 0;
+    
+    if (engagementScore > 0.8 && gamesCreated > 10) return 'power_user';
+    if (engagementScore > 0.6 && gamesCreated > 5) return 'active_user';
+    if (engagementScore > 0.3) return 'casual_user';
+    if (gamesCreated === 0) return 'new_user';
+    return 'at_risk_user';
+  }
 
-      // Анализируем данные и получаем инсайты
-      const insights = config.includeInsights 
-        ? await this.generateInsights(reportMetrics, charts)
-        : [];
+  // Расчет скора вовлеченности
+  private async calculateEngagementScore(userId: string): Promise<number> {
+    const userEvents = Array.from(this.analyticsService['events'].values())
+      .flat()
+      .filter(event => event.userId === userId);
+    
+    const userSessions = Array.from(this.analyticsService['sessions'].values())
+      .filter(session => session.userId === userId);
 
-      // Сравнение с предыдущим периодом
-      let comparison;
-      if (config.includeComparison) {
-        comparison = await this.generateComparison(reportMetrics, config.dateRange);
-      }
+    if (userEvents.length === 0) return 0;
 
-      const report: AnalyticsReport = {
-        id: reportId,
-        title: config.title,
-        description: `Аналитический отчет за период ${config.dateRange.start.toLocaleDateString()} - ${config.dateRange.end.toLocaleDateString()}`,
-        type: config.type,
-        dateRange: config.dateRange,
-        metrics: reportMetrics,
-        charts,
-        insights,
-        comparison,
-        generatedAt: new Date(),
-        generatedBy: 'advanced-analytics-service',
-        tags: ['automated', config.dateRange.period],
-        visibility: 'private',
-        format: config.format || 'json'
+    const last30Days = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const recentEvents = userEvents.filter(e => e.timestamp >= last30Days);
+    const recentSessions = userSessions.filter(s => s.startTime >= last30Days);
+
+    // Частота использования
+    const frequency = recentSessions.length / 30;
+    
+    // Разнообразие действий
+    const uniqueEvents = new Set(recentEvents.map(e => e.eventName)).size;
+    const diversity = Math.min(1, uniqueEvents / 10);
+    
+    // Глубина взаимодействия
+    const avgEventsPerSession = recentSessions.length > 0 
+      ? recentEvents.length / recentSessions.length 
+      : 0;
+    const depth = Math.min(1, avgEventsPerSession / 20);
+    
+    // Рецентность
+    const lastActivity = Math.max(...userEvents.map(e => e.timestamp.getTime()));
+    const daysSinceLastActivity = (Date.now() - lastActivity) / (24 * 60 * 60 * 1000);
+    const recency = Math.max(0, 1 - daysSinceLastActivity / 30);
+    
+    // Итоговый скор
+    const score = (frequency * 0.3 + diversity * 0.2 + depth * 0.3 + recency * 0.2);
+    
+    return Math.min(1, score);
+  }
+
+  // Обновление инсайтов пользователя
+  private async updateUserInsights(userId: string): Promise<void> {
+    try {
+      const predictions = this.predictions.get(userId) || [];
+      const latestPredictions = predictions.slice(-5); // Последние 5 предсказаний
+
+      const churnPrediction = latestPredictions.find(p => p.modelId === 'churn_prediction');
+      const ltvPrediction = latestPredictions.find(p => p.modelId === 'ltv_prediction');
+      const segmentPrediction = latestPredictions.find(p => p.modelId === 'user_segmentation');
+
+      const engagementScore = await this.calculateEngagementScore(userId);
+      const behaviorPattern = this.determineBehaviorPattern(userId, predictions);
+      
+      const insight: UserInsight = {
+        userId,
+        segments: segmentPrediction ? [segmentPrediction.prediction] : ['unknown'],
+        ltv: ltvPrediction ? ltvPrediction.prediction : 0,
+        churnProbability: churnPrediction ? churnPrediction.prediction : 0.5,
+        nextBestAction: await this.determineNextBestAction(userId, predictions),
+        engagementScore,
+        personalizedRecommendations: await this.generatePersonalizedRecommendations(userId),
+        riskFactors: await this.identifyRiskFactors(userId, predictions),
+        opportunities: await this.identifyOpportunities(userId, predictions),
+        behaviorPattern
       };
 
-      this.reports.set(reportId, report);
-
-      // Экспортируем отчет в нужном формате
-      if (config.format && config.format !== 'json') {
-        await this.exportReport(report, config.format);
-      }
-
-      this.emit('reportGenerated', report);
-      logger.info(`Generated analytics report: ${reportId}`);
-
-      return report;
+      this.userInsights.set(userId, insight);
+      
+      logger.info('Обновлены инсайты пользователя', { userId, churnProbability: insight.churnProbability });
     } catch (error) {
-      logger.error('Error generating report:', error);
-      throw error;
+      logger.error('Ошибка обновления инсайтов пользователя', { error, userId });
     }
   }
 
-  // Анализ воронки конверсии
-  public async createFunnelAnalysis(config: {
-    name: string;
-    steps: Array<{
-      name: string;
-      event: string;
-      filters?: Record<string, any>;
-    }>;
-    dateRange: { start: Date; end: Date };
-  }): Promise<FunnelAnalysis> {
-    try {
-      const funnelId = this.generateFunnelId();
+  // Определение паттерна поведения
+  private determineBehaviorPattern(userId: string, predictions: Prediction[]): UserInsight['behaviorPattern'] {
+    const userEvents = Array.from(this.analyticsService['events'].values())
+      .flat()
+      .filter(event => event.userId === userId);
+
+    const registrationDays = this.getDaysSinceRegistration(userId);
+    const totalSessions = Array.from(this.analyticsService['sessions'].values())
+      .filter(session => session.userId === userId).length;
+
+    if (registrationDays <= 7) return 'new_user';
+    if (totalSessions > 50 && userEvents.length > 200) return 'power_user';
+    if (totalSessions > 10 && userEvents.length > 50) return 'active_user';
+    
+    const churnPrediction = predictions.find(p => p.modelId === 'churn_prediction');
+    if (churnPrediction && churnPrediction.prediction > 0.7) return 'at_risk';
+    
+    const lastActivity = Math.max(...userEvents.map(e => e.timestamp.getTime()));
+    const daysSinceLastActivity = (Date.now() - lastActivity) / (24 * 60 * 60 * 1000);
+    if (daysSinceLastActivity > 30) return 'churned';
+
+    return 'active_user';
+  }
+
+  // Определение следующего лучшего действия
+  private async determineNextBestAction(userId: string, predictions: Prediction[]): Promise<string> {
+    const insight = this.userInsights.get(userId);
+    const userEvents = Array.from(this.analyticsService['events'].values())
+      .flat()
+      .filter(event => event.userId === userId);
+
+    const churnPrediction = predictions.find(p => p.modelId === 'churn_prediction');
+    const conversionPrediction = predictions.find(p => p.modelId === 'conversion_prediction');
+
+    // Высокий риск оттока
+    if (churnPrediction && churnPrediction.prediction > 0.7) {
+      return 'send_retention_email';
+    }
+
+    // Высокая вероятность конверсии
+    if (conversionPrediction && conversionPrediction.prediction > 0.6) {
+      return 'show_upgrade_offer';
+    }
+
+    // Новый пользователь
+    const registrationDays = this.getDaysSinceRegistration(userId);
+    if (registrationDays <= 3) {
+      return 'show_onboarding_tutorial';
+    }
+
+    // Активный пользователь без покупок
+    const hasPurchases = userEvents.some(e => e.eventName === 'payment_completed');
+    if (!hasPurchases && userEvents.length > 20) {
+      return 'offer_free_trial';
+    }
+
+    // Пользователь создал много игр
+    const gamesCreated = userEvents.filter(e => e.eventName === 'game_created').length;
+    if (gamesCreated > 5) {
+      return 'suggest_advanced_features';
+    }
+
+    return 'engage_with_content';
+  }
+
+  // Генерация персонализированных рекомендаций
+  private async generatePersonalizedRecommendations(userId: string): Promise<string[]> {
+    const userEvents = Array.from(this.analyticsService['events'].values())
+      .flat()
+      .filter(event => event.userId === userId);
+
+    const recommendations: string[] = [];
+
+    // Анализируем предпочтения по типам игр
+    const gameTypes = userEvents
+      .filter(e => e.eventName === 'game_created')
+      .map(e => e.gameInfo?.gameType)
+      .filter(Boolean);
+
+    const popularGameType = this.getMostFrequent(gameTypes);
+    if (popularGameType) {
+      recommendations.push(`Попробуйте создать еще одну ${popularGameType} игру`);
+    }
+
+    // Рекомендации на основе времени активности
+    const activityHours = userEvents.map(e => e.timestamp.getHours());
+    const peakHour = this.getMostFrequent(activityHours);
+    if (peakHour !== undefined) {
+      recommendations.push(`Лучшее время для вас - ${peakHour}:00`);
+    }
+
+    // Рекомендации на основе паттернов использования
+    const insight = this.userInsights.get(userId);
+    if (insight) {
+      if (insight.engagementScore < 0.3) {
+        recommendations.push('Попробуйте наши интерактивные туториалы');
+      }
       
-      // Анализируем каждый шаг воронки
-      const steps = await Promise.all(
-        config.steps.map(async (step, index) => {
-          const users = await this.getUsersForStep(step, config.dateRange);
-          const previousUsers = index > 0 
-            ? (await this.getUsersForStep(config.steps[index - 1], config.dateRange))
-            : null;
+      if (insight.behaviorPattern === 'power_user') {
+        recommendations.push('Ознакомьтесь с продвинутыми функциями');
+      }
+    }
 
-          const conversionRate = previousUsers 
-            ? (users / previousUsers) * 100 
-            : undefined;
-          
-          const dropoffRate = previousUsers 
-            ? ((previousUsers - users) / previousUsers) * 100 
-            : undefined;
+    return recommendations.slice(0, 5); // Максимум 5 рекомендаций
+  }
 
-          return {
-            name: step.name,
-            users,
-            conversionRate,
-            dropoffRate,
-            averageTime: await this.getAverageTimeForStep(step, config.dateRange)
-          };
-        })
-      );
+  // Выявление факторов риска
+  private async identifyRiskFactors(userId: string, predictions: Prediction[]): Promise<string[]> {
+    const riskFactors: string[] = [];
+    const userEvents = Array.from(this.analyticsService['events'].values())
+      .flat()
+      .filter(event => event.userId === userId);
 
-      const totalUsers = steps[0]?.users || 0;
-      const finalUsers = steps[steps.length - 1]?.users || 0;
-      const overallConversion = totalUsers > 0 ? (finalUsers / totalUsers) * 100 : 0;
+    // Анализ активности
+    const last7Days = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const recentEvents = userEvents.filter(e => e.timestamp >= last7Days);
+    
+    if (recentEvents.length === 0) {
+      riskFactors.push('Отсутствие активности в течение недели');
+    }
 
-      // Находим узкие места
-      const bottlenecks = steps
-        .filter(step => step.dropoffRate && step.dropoffRate > 30)
-        .map(step => ({
-          step: step.name,
-          dropoffRate: step.dropoffRate!,
-          impact: step.dropoffRate! * (step.users / totalUsers)
-        }))
-        .sort((a, b) => b.impact - a.impact);
+    // Анализ ошибок
+    const errorEvents = userEvents.filter(e => e.eventType === 'error');
+    if (errorEvents.length > userEvents.length * 0.1) {
+      riskFactors.push('Высокая частота ошибок');
+    }
 
-      // Генерируем инсайты и рекомендации
-      const insights = this.generateFunnelInsights(steps, bottlenecks, overallConversion);
-      const recommendations = this.generateFunnelRecommendations(bottlenecks, steps);
+    // Анализ времени сессий
+    const userSessions = Array.from(this.analyticsService['sessions'].values())
+      .filter(session => session.userId === userId);
+    
+    const avgSessionDuration = userSessions.length > 0 
+      ? userSessions.reduce((sum, s) => sum + (s.duration || 0), 0) / userSessions.length
+      : 0;
+    
+    if (avgSessionDuration < 60) { // Менее минуты
+      riskFactors.push('Очень короткие сессии');
+    }
 
-      const funnel: FunnelAnalysis = {
-        id: funnelId,
-        name: config.name,
-        steps,
-        totalUsers,
-        overallConversion,
-        bottlenecks,
-        insights,
-        recommendations
-      };
+    // Анализ предсказаний
+    const churnPrediction = predictions.find(p => p.modelId === 'churn_prediction');
+    if (churnPrediction && churnPrediction.prediction > 0.6) {
+      riskFactors.push('Высокий риск оттока по модели ML');
+    }
 
-      this.funnels.set(funnelId, funnel);
+    return riskFactors;
+  }
 
-      this.emit('funnelCreated', funnel);
-      logger.info(`Created funnel analysis: ${funnelId}`);
+  // Выявление возможностей
+  private async identifyOpportunities(userId: string, predictions: Prediction[]): Promise<string[]> {
+    const opportunities: string[] = [];
+    const userEvents = Array.from(this.analyticsService['events'].values())
+      .flat()
+      .filter(event => event.userId === userId);
 
-      return funnel;
+    // Анализ потенциала монетизации
+    const conversionPrediction = predictions.find(p => p.modelId === 'conversion_prediction');
+    if (conversionPrediction && conversionPrediction.prediction > 0.5) {
+      opportunities.push('Высокий потенциал конверсии');
+    }
+
+    // Анализ активности создания игр
+    const gamesCreated = userEvents.filter(e => e.eventName === 'game_created').length;
+    if (gamesCreated > 3) {
+      opportunities.push('Потенциальный power user');
+    }
+
+    // Анализ социального потенциала
+    const socialEvents = userEvents.filter(e => e.eventName.includes('share') || e.eventName.includes('social'));
+    if (socialEvents.length > 0) {
+      opportunities.push('Активный пользователь в соцсетях');
+    }
+
+    // Анализ времени регистрации
+    const registrationDays = this.getDaysSinceRegistration(userId);
+    if (registrationDays <= 30 && userEvents.length > 10) {
+      opportunities.push('Быстрое освоение платформы');
+    }
+
+    return opportunities;
+  }
+
+  // Вспомогательные методы
+  private getMostFrequent<T>(array: T[]): T | undefined {
+    if (array.length === 0) return undefined;
+    
+    const frequency = array.reduce((acc, item) => {
+      acc[item as any] = (acc[item as any] || 0) + 1;
+      return acc;
+    }, {} as Record<any, number>);
+
+    return Object.keys(frequency).reduce((a, b) => 
+      frequency[a] > frequency[b] ? a : b
+    ) as T;
+  }
+
+  private getDaysSinceRegistration(userId: string): number {
+    const userEvents = Array.from(this.analyticsService['events'].values())
+      .flat()
+      .filter(event => event.userId === userId);
+
+    if (userEvents.length === 0) return 0;
+
+    const firstEvent = userEvents.reduce((earliest, event) => 
+      event.timestamp < earliest.timestamp ? event : earliest
+    );
+
+    return (Date.now() - firstEvent.timestamp.getTime()) / (24 * 60 * 60 * 1000);
+  }
+
+  // Обнаружение аномалий
+  private detectAnomalies(event: AnalyticsEvent): void {
+    // Здесь должны быть алгоритмы обнаружения аномалий
+    // Для демонстрации используем простые правила
+    
+    const anomalies: AnomalyDetection[] = [];
+
+    // Детектор всплесков активности
+    if (event.eventType === 'page_view') {
+      const currentHour = new Date().getHours();
+      const recentEvents = Array.from(this.analyticsService['events'].values())
+        .flat()
+        .filter(e => {
+          const eventHour = e.timestamp.getHours();
+          return Math.abs(eventHour - currentHour) <= 1 && e.eventType === 'page_view';
+        });
+
+      if (recentEvents.length > 100) { // Необычно высокая активность
+        anomalies.push({
+          id: uuidv4(),
+          type: 'metric_spike',
+          metric: 'page_views_per_hour',
+          severity: 'medium',
+          detectedAt: new Date(),
+          description: 'Необычно высокая активность просмотров страниц',
+          expectedValue: 50,
+          actualValue: recentEvents.length,
+          deviation: (recentEvents.length - 50) / 50,
+          possibleCauses: ['Вирусный контент', 'Бот-активность', 'Маркетинговая кампания'],
+          recommendedActions: ['Проверить источники трафика', 'Анализировать качество трафика'],
+          autoResolved: false
+        });
+      }
+    }
+
+    // Детектор ошибок
+    if (event.eventType === 'error') {
+      const recentErrors = Array.from(this.analyticsService['events'].values())
+        .flat()
+        .filter(e => e.eventType === 'error' && 
+          (Date.now() - e.timestamp.getTime()) < 60 * 60 * 1000); // Последний час
+
+      if (recentErrors.length > 10) {
+        anomalies.push({
+          id: uuidv4(),
+          type: 'metric_spike',
+          metric: 'error_rate',
+          severity: 'high',
+          detectedAt: new Date(),
+          description: 'Высокая частота ошибок',
+          expectedValue: 2,
+          actualValue: recentErrors.length,
+          deviation: (recentErrors.length - 2) / 2,
+          possibleCauses: ['Проблемы с сервером', 'Ошибка в коде', 'Проблемы с внешними сервисами'],
+          recommendedActions: ['Проверить логи сервера', 'Откатить последние изменения'],
+          autoResolved: false
+        });
+      }
+    }
+
+    // Сохраняем аномалии
+    this.anomalies.push(...anomalies);
+    
+    // Уведомляем о критических аномалиях
+    anomalies.forEach(anomaly => {
+      if (anomaly.severity === 'critical' || anomaly.severity === 'high') {
+        logger.warn('Обнаружена аномалия', anomaly);
+      }
+    });
+  }
+
+  // Периодический анализ
+  private async performPeriodicAnalysis(): Promise<void> {
+    try {
+      // Обновляем когортный анализ
+      await this.updateAllCohorts();
+      
+      // Очищаем старые аномалии
+      this.cleanupOldAnomalies();
+      
+      // Обновляем модели при необходимости
+      await this.checkModelPerformance();
+      
+      logger.info('Периодический анализ завершен');
     } catch (error) {
-      logger.error('Error creating funnel analysis:', error);
-      throw error;
+      logger.error('Ошибка периодического анализа', { error });
     }
   }
 
   // Когортный анализ
-  public async createCohortAnalysis(config: {
-    type: CohortAnalysis['type'];
-    cohortBy: 'signup_date' | 'first_purchase' | 'first_game';
-    measureBy: 'retention' | 'revenue' | 'engagement';
-    periods: number; // количество периодов для анализа
-    periodType: 'day' | 'week' | 'month';
-    dateRange: { start: Date; end: Date };
-  }): Promise<CohortAnalysis> {
-    try {
-      const cohortId = this.generateCohortId();
-      
-      // Создаем когорты
-      const cohorts = await this.buildCohorts(config);
-      
-      // Вычисляем средние значения
-      const averageRetention = this.calculateAverageRetention(cohorts);
-      
-      // Генерируем инсайты
-      const insights = this.generateCohortInsights(cohorts, averageRetention, config.type);
-
-      const analysis: CohortAnalysis = {
-        id: cohortId,
-        type: config.type,
-        periods: this.generatePeriodLabels(config.periods, config.periodType),
-        cohorts,
-        averageRetention,
-        insights
-      };
-
-      this.cohorts.set(cohortId, analysis);
-
-      this.emit('cohortCreated', analysis);
-      logger.info(`Created cohort analysis: ${cohortId}`);
-
-      return analysis;
-    } catch (error) {
-      logger.error('Error creating cohort analysis:', error);
-      throw error;
-    }
-  }
-
-  // Сегментация пользователей
-  public async createUserSegment(config: {
-    name: string;
-    description: string;
-    criteria: UserSegment['criteria'];
-  }): Promise<UserSegment> {
-    try {
-      const segmentId = this.generateSegmentId();
-      
-      // Применяем критерии сегментации
-      const users = await this.applySegmentationCriteria(config.criteria);
-      
-      // Вычисляем метрики для сегмента
-      const metrics = await this.calculateSegmentMetrics(users);
-
-      const segment: UserSegment = {
-        id: segmentId,
-        name: config.name,
-        description: config.description,
-        criteria: config.criteria,
-        userCount: users.length,
-        metrics,
-        createdAt: new Date()
-      };
-
-      this.segments.set(segmentId, segment);
-
-      this.emit('segmentCreated', segment);
-      logger.info(`Created user segment: ${segmentId} with ${users.length} users`);
-
-      return segment;
-    } catch (error) {
-      logger.error('Error creating user segment:', error);
-      throw error;
-    }
-  }
-
-  // Настройка алертов
-  public async createAlert(config: {
-    type: PerformanceAlert['type'];
-    severity: PerformanceAlert['severity'];
-    title: string;
-    description: string;
-    metric: string;
-    condition: {
-      operator: 'gt' | 'lt' | 'eq' | 'change_gt' | 'change_lt';
-      value: number;
-      timeWindow?: string;
-    };
-    actions: PerformanceAlert['actions'];
-  }): Promise<PerformanceAlert> {
-    try {
-      const alertId = this.generateAlertId();
-
-      const alert: PerformanceAlert = {
-        id: alertId,
-        type: config.type,
-        severity: config.severity,
-        title: config.title,
-        description: config.description,
-        metric: config.metric,
-        currentValue: 0, // будет обновлено при проверке
-        thresholdValue: config.condition.value,
-        triggeredAt: new Date(),
-        status: 'active',
-        actions: config.actions
-      };
-
-      this.alerts.set(alertId, alert);
-
-      this.emit('alertCreated', alert);
-      logger.info(`Created performance alert: ${alertId}`);
-
-      return alert;
-    } catch (error) {
-      logger.error('Error creating alert:', error);
-      throw error;
-    }
-  }
-
-  // Реальное время дашборд
-  public async getRealTimeDashboard(): Promise<{
-    metrics: AnalyticsMetric[];
-    activeUsers: number;
-    systemHealth: {
-      cpu: number;
-      memory: number;
-      disk: number;
-      network: number;
-    };
-    gameActivity: {
-      gamesPlaying: number;
-      gamesGenerated: number;
-      activeGames: number;
-    };
-    alerts: PerformanceAlert[];
-    trends: Array<{
-      metric: string;
-      trend: 'up' | 'down' | 'stable';
-      change: number;
-    }>;
-  }> {
-    try {
-      // Получаем последние метрики
-      const recentMetrics = this.getRecentMetrics(5); // последние 5 минут
-
-      // Системная информация
-      const systemHealth = await this.getSystemHealth();
-      
-      // Игровая активность
-      const gameActivity = await this.getGameActivity();
-      
-      // Активные алерты
-      const activeAlerts = Array.from(this.alerts.values())
-        .filter(alert => alert.status === 'active')
-        .sort((a, b) => b.triggeredAt.getTime() - a.triggeredAt.getTime())
-        .slice(0, 10);
-
-      // Тренды
-      const trends = await this.calculateTrends(recentMetrics);
-
-      // Активные пользователи
-      const activeUsers = await this.getActiveUsersCount();
-
-      return {
-        metrics: recentMetrics,
-        activeUsers,
-        systemHealth,
-        gameActivity,
-        alerts: activeAlerts,
-        trends
-      };
-    } catch (error) {
-      logger.error('Error getting real-time dashboard:', error);
-      throw error;
-    }
-  }
-
-  // Предиктивная аналитика
-  public async generatePredictions(config: {
-    metric: string;
-    horizon: number; // дни вперед
-    confidence: number; // уровень уверенности 0-1
-    model: 'linear' | 'exponential' | 'seasonal' | 'arima';
-  }): Promise<{
-    predictions: Array<{
-      date: Date;
-      value: number;
-      confidence: { lower: number; upper: number };
-    }>;
-    accuracy: number;
-    insights: string[];
-  }> {
-    try {
-      const historicalData = this.metrics.get(config.metric) || [];
-      
-      if (historicalData.length < 30) {
-        throw new Error('Insufficient historical data for prediction');
-      }
-
-      // Применяем выбранную модель
-      let predictions;
-      switch (config.model) {
-        case 'linear':
-          predictions = this.linearRegression(historicalData, config.horizon);
-          break;
-        case 'exponential':
-          predictions = this.exponentialSmoothing(historicalData, config.horizon);
-          break;
-        case 'seasonal':
-          predictions = this.seasonalDecomposition(historicalData, config.horizon);
-          break;
-        case 'arima':
-          predictions = this.arimaModel(historicalData, config.horizon);
-          break;
-        default:
-          throw new Error(`Unknown prediction model: ${config.model}`);
-      }
-
-      // Вычисляем точность модели на исторических данных
-      const accuracy = this.calculateModelAccuracy(historicalData, config.model);
-
-      // Генерируем инсайты
-      const insights = this.generatePredictionInsights(predictions, historicalData, accuracy);
-
-      logger.info(`Generated predictions for metric ${config.metric} with ${accuracy}% accuracy`);
-
-      return {
-        predictions,
-        accuracy,
-        insights
-      };
-    } catch (error) {
-      logger.error('Error generating predictions:', error);
-      throw error;
-    }
-  }
-
-  // A/B тест анализ
-  public async analyzeABTest(config: {
-    testId: string;
-    metric: string;
-    variants: string[];
-    dateRange: { start: Date; end: Date };
-    significanceLevel: number;
-  }): Promise<{
-    results: Array<{
-      variant: string;
-      users: number;
-      conversions: number;
-      conversionRate: number;
-      confidence: number;
-    }>;
-    winner?: string;
-    significance: number;
-    insights: string[];
-    recommendations: string[];
-  }> {
-    try {
-      // Получаем данные для каждого варианта
-      const results = await Promise.all(
-        config.variants.map(async variant => {
-          const data = await this.getABTestData(config.testId, variant, config.dateRange);
-          return {
-            variant,
-            users: data.users,
-            conversions: data.conversions,
-            conversionRate: data.conversions / data.users,
-            confidence: this.calculateConfidence(data.users, data.conversions)
-          };
-        })
-      );
-
-      // Статистическая значимость
-      const significance = this.calculateStatisticalSignificance(results);
-      
-      // Определяем победителя
-      let winner;
-      if (significance >= config.significanceLevel) {
-        winner = results.reduce((best, current) => 
-          current.conversionRate > best.conversionRate ? current : best
-        ).variant;
-      }
-
-      // Генерируем инсайты и рекомендации
-      const insights = this.generateABTestInsights(results, significance);
-      const recommendations = this.generateABTestRecommendations(results, winner, significance);
-
-      logger.info(`Analyzed A/B test ${config.testId} with ${significance}% significance`);
-
-      return {
-        results,
-        winner,
-        significance,
-        insights,
-        recommendations
-      };
-    } catch (error) {
-      logger.error('Error analyzing A/B test:', error);
-      throw error;
-    }
-  }
-
-  // Приватные методы для анализа метрик
-
-  private analyzeGameMetrics(data: any[], timestamp: Date): AnalyticsMetric[] {
-    const metrics: AnalyticsMetric[] = [];
-
-    // Общее количество игр
-    metrics.push({
-      id: 'total_games',
-      name: 'Всего игр',
-      value: data.length,
-      trend: 'up',
-      unit: 'count',
-      category: 'usage',
-      timestamp
-    });
-
-    // Среднее время игры
-    const avgPlayTime = data.reduce((sum, game) => sum + (game.playTime || 0), 0) / data.length;
-    metrics.push({
-      id: 'avg_play_time',
-      name: 'Среднее время игры',
-      value: avgPlayTime,
-      trend: 'stable',
-      unit: 'seconds',
-      category: 'usage',
-      timestamp
-    });
-
-    // Популярные жанры
-    const genres = data.reduce((acc, game) => {
-      acc[game.genre] = (acc[game.genre] || 0) + 1;
-      return acc;
-    }, {});
-
-    Object.entries(genres).forEach(([genre, count]) => {
-      metrics.push({
-        id: `genre_${genre.toLowerCase()}`,
-        name: `Игры жанра ${genre}`,
-        value: count as number,
-        trend: 'stable',
-        unit: 'count',
-        category: 'usage',
-        timestamp,
-        metadata: { genre }
-      });
-    });
-
-    return metrics;
-  }
-
-  private analyzeUserMetrics(data: any[], timestamp: Date): AnalyticsMetric[] {
-    const metrics: AnalyticsMetric[] = [];
-
-    // Активные пользователи
-    const activeUsers = data.filter(user => user.lastActive && 
-      new Date(user.lastActive) > new Date(Date.now() - 24 * 60 * 60 * 1000)
-    ).length;
-
-    metrics.push({
-      id: 'daily_active_users',
-      name: 'Активные пользователи (24ч)',
-      value: activeUsers,
-      trend: 'up',
-      unit: 'count',
-      category: 'user',
-      timestamp
-    });
-
-    // Новые пользователи
-    const newUsers = data.filter(user => 
-      new Date(user.createdAt) > new Date(Date.now() - 24 * 60 * 60 * 1000)
-    ).length;
-
-    metrics.push({
-      id: 'new_users',
-      name: 'Новые пользователи',
-      value: newUsers,
-      trend: 'up',
-      unit: 'count',
-      category: 'user',
-      timestamp
-    });
-
-    return metrics;
-  }
-
-  private analyzeSystemMetrics(data: any[], timestamp: Date): AnalyticsMetric[] {
-    const metrics: AnalyticsMetric[] = [];
+  private async updateCohortAnalysis(userId: string): Promise<void> {
+    // Определяем когорту пользователя по дате регистрации
+    const registrationDate = this.getRegistrationDate(userId);
+    const cohortId = this.getCohortId(registrationDate);
     
-    // CPU загрузка
-    const avgCpu = data.reduce((sum, point) => sum + point.cpu, 0) / data.length;
-    metrics.push({
-      id: 'system_cpu',
-      name: 'Загрузка CPU',
-      value: avgCpu,
-      trend: avgCpu > 80 ? 'up' : avgCpu < 50 ? 'down' : 'stable',
-      unit: 'percent',
-      category: 'performance',
-      timestamp
-    });
-
-    // Память
-    const avgMemory = data.reduce((sum, point) => sum + point.memory, 0) / data.length;
-    metrics.push({
-      id: 'system_memory',
-      name: 'Использование памяти',
-      value: avgMemory,
-      trend: avgMemory > 85 ? 'up' : avgMemory < 60 ? 'down' : 'stable',
-      unit: 'percent',
-      category: 'performance',
-      timestamp
-    });
-
-    return metrics;
-  }
-
-  private analyzeCustomMetrics(data: any[], timestamp: Date): AnalyticsMetric[] {
-    return data.map(item => ({
-      id: item.id || `custom_${Date.now()}`,
-      name: item.name || 'Custom Metric',
-      value: parseFloat(item.value) || 0,
-      trend: item.trend || 'stable',
-      unit: item.unit || 'count',
-      category: item.category || 'custom',
-      timestamp,
-      metadata: item.metadata
-    }));
-  }
-
-  // Методы для работы с отчетами и инсайтами
-
-  private async getMetricsForPeriod(
-    metricIds: string[],
-    start: Date,
-    end: Date
-  ): Promise<AnalyticsMetric[]> {
-    const result: AnalyticsMetric[] = [];
-
-    for (const metricId of metricIds) {
-      const metricHistory = this.metrics.get(metricId) || [];
-      const filteredMetrics = metricHistory.filter(
-        metric => metric.timestamp >= start && metric.timestamp <= end
-      );
-      result.push(...filteredMetrics);
-    }
-
-    return result;
-  }
-
-  private async generateChartsForMetrics(
-    metrics: AnalyticsMetric[],
-    dateRange: AnalyticsReport['dateRange']
-  ): Promise<ChartData[]> {
-    const charts: ChartData[] = [];
-    
-    // Группируем метрики по ID
-    const metricGroups = metrics.reduce((acc, metric) => {
-      if (!acc[metric.id]) acc[metric.id] = [];
-      acc[metric.id].push(metric);
-      return acc;
-    }, {} as Record<string, AnalyticsMetric[]>);
-
-    // Создаем график для каждой группы метрик
-    Object.entries(metricGroups).forEach(([metricId, metricList]) => {
-      const data = metricList.map(metric => ({
-        timestamp: metric.timestamp,
-        value: metric.value,
-        label: metric.name
-      }));
-
-      charts.push({
-        id: `chart_${metricId}`,
-        title: metricList[0].name,
-        type: 'line',
-        data,
-        config: {
-          xAxis: 'timestamp',
-          yAxis: 'value',
-          timeRange: dateRange.period
+    let cohort = this.cohorts.get(cohortId);
+    if (!cohort) {
+      cohort = {
+        cohortId,
+        startDate: registrationDate,
+        userCount: 0,
+        retentionRates: {},
+        metrics: {
+          averageLTV: 0,
+          conversionRate: 0,
+          engagementScore: 0,
+          topFeatures: []
+        },
+        trends: {
+          growth: 'stable',
+          healthScore: 0.5,
+          warnings: []
         }
-      });
-    });
+      };
+      this.cohorts.set(cohortId, cohort);
+    }
 
-    return charts;
-  }
-
-  private async generateInsights(
-    metrics: AnalyticsMetric[],
-    charts: ChartData[]
-  ): Promise<AnalyticsReport['insights']> {
-    const insights: AnalyticsReport['insights'] = [];
-
-    // Анализ трендов
-    const trendAnalysis = this.analyzeTrends(metrics);
-    insights.push(...trendAnalysis);
-
-    // Поиск аномалий
-    const anomalies = this.detectAnomalies(metrics);
-    insights.push(...anomalies);
-
-    // Корреляционный анализ
-    const correlations = this.findCorrelations(metrics);
-    insights.push(...correlations);
-
-    return insights;
-  }
-
-  private analyzeTrends(metrics: AnalyticsMetric[]): AnalyticsReport['insights'] {
-    const insights: AnalyticsReport['insights'] = [];
+    cohort.userCount++;
     
-    // Группируем по метрикам и анализируем тренды
-    const metricGroups = metrics.reduce((acc, metric) => {
-      if (!acc[metric.id]) acc[metric.id] = [];
-      acc[metric.id].push(metric);
-      return acc;
-    }, {} as Record<string, AnalyticsMetric[]>);
-
-    Object.entries(metricGroups).forEach(([metricId, metricList]) => {
-      if (metricList.length < 3) return;
-
-      const sortedMetrics = metricList.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-      const trend = this.calculateTrend(sortedMetrics.map(m => m.value));
-
-      if (Math.abs(trend) > 0.1) { // Значимое изменение
-        insights.push({
-          type: 'trend',
-          title: `${sortedMetrics[0].name}: ${trend > 0 ? 'Рост' : 'Снижение'}`,
-          description: `Метрика показывает ${trend > 0 ? 'положительную' : 'отрицательную'} динамику (${(trend * 100).toFixed(1)}%)`,
-          impact: Math.abs(trend) > 0.3 ? 'high' : Math.abs(trend) > 0.15 ? 'medium' : 'low',
-          actionable: Math.abs(trend) > 0.2,
-          recommendations: trend < -0.2 ? [
-            'Проанализировать причины снижения',
-            'Принять корректирующие меры',
-            'Настроить мониторинг'
-          ] : undefined
-        });
-      }
-    });
-
-    return insights;
+    // Обновляем метрики когорты
+    await this.updateCohortMetrics(cohort);
   }
 
-  private detectAnomalies(metrics: AnalyticsMetric[]): AnalyticsReport['insights'] {
-    const insights: AnalyticsReport['insights'] = [];
+  private getRegistrationDate(userId: string): Date {
+    const userEvents = Array.from(this.analyticsService['events'].values())
+      .flat()
+      .filter(event => event.userId === userId);
+
+    if (userEvents.length === 0) return new Date();
+
+    return userEvents.reduce((earliest, event) => 
+      event.timestamp < earliest.timestamp ? event : earliest
+    ).timestamp;
+  }
+
+  private getCohortId(date: Date): string {
+    return `${date.getFullYear()}-${date.getMonth() + 1}`;
+  }
+
+  private async updateCohortMetrics(cohort: CohortAnalysis): Promise<void> {
+    // Здесь должен быть расчет retention rates, LTV и других метрик
+    // Для демонстрации используем упрощенную логику
     
-    // Простой алгоритм обнаружения аномалий на основе стандартного отклонения
-    const metricGroups = metrics.reduce((acc, metric) => {
-      if (!acc[metric.id]) acc[metric.id] = [];
-      acc[metric.id].push(metric);
-      return acc;
-    }, {} as Record<string, AnalyticsMetric[]>);
+    const daysSinceCohortStart = (Date.now() - cohort.startDate.getTime()) / (24 * 60 * 60 * 1000);
+    
+    // Retention rates (упрощенная версия)
+    for (let day = 1; day <= Math.min(30, daysSinceCohortStart); day++) {
+      cohort.retentionRates[day] = Math.max(0.1, 1 - (day * 0.05) + Math.random() * 0.1);
+    }
 
-    Object.entries(metricGroups).forEach(([metricId, metricList]) => {
-      if (metricList.length < 10) return;
+    // Средний LTV
+    cohort.metrics.averageLTV = 100 + Math.random() * 200;
+    
+    // Конверсия
+    cohort.metrics.conversionRate = 0.05 + Math.random() * 0.1;
+    
+    // Скор здоровья когорты
+    const retention7 = cohort.retentionRates[7] || 0;
+    const retention30 = cohort.retentionRates[30] || 0;
+    cohort.trends.healthScore = (retention7 + retention30 + cohort.metrics.conversionRate) / 3;
+  }
 
-      const values = metricList.map(m => m.value);
-      const mean = values.reduce((sum, val) => sum + val, 0) / values.length;
-      const stdDev = Math.sqrt(
-        values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / values.length
-      );
+  private async updateAllCohorts(): Promise<void> {
+    for (const cohort of this.cohorts.values()) {
+      await this.updateCohortMetrics(cohort);
+    }
+  }
 
-      const anomalies = metricList.filter(metric => 
-        Math.abs(metric.value - mean) > 2 * stdDev
-      );
+  // Генерация умных инсайтов
+  private async generateIntelligentInsights(): Promise<void> {
+    try {
+      const newInsights: IntelligentInsight[] = [];
 
-      if (anomalies.length > 0) {
-        insights.push({
-          type: 'anomaly',
-          title: `Аномальные значения в ${metricList[0].name}`,
-          description: `Обнаружено ${anomalies.length} аномальных значений, отклоняющихся от нормы более чем на 2 стандартных отклонения`,
-          impact: 'medium',
+      // Анализ трендов пользователей
+      const userInsights = Array.from(this.userInsights.values());
+      const highChurnUsers = userInsights.filter(u => u.churnProbability > 0.7);
+      
+      if (highChurnUsers.length > userInsights.length * 0.2) {
+        newInsights.push({
+          id: uuidv4(),
+          type: 'warning',
+          title: 'Высокий риск оттока пользователей',
+          description: `${highChurnUsers.length} пользователей имеют высокий риск оттока`,
+          impact: 'high',
+          confidence: 0.85,
+          data: { count: highChurnUsers.length, percentage: (highChurnUsers.length / userInsights.length) * 100 },
           actionable: true,
-          recommendations: [
-            'Проверить качество данных',
-            'Исследовать причины аномалий',
-            'Настроить алерты для раннего обнаружения'
-          ]
+          suggestedActions: [
+            'Запустить retention кампанию',
+            'Персонализировать контент',
+            'Провести опрос удовлетворенности'
+          ],
+          createdAt: new Date(),
+          relevantFor: ['product_team', 'marketing_team']
         });
       }
-    });
 
-    return insights;
-  }
-
-  private findCorrelations(metrics: AnalyticsMetric[]): AnalyticsReport['insights'] {
-    const insights: AnalyticsReport['insights'] = [];
-    
-    // Простой корреляционный анализ между парами метрик
-    const metricGroups = metrics.reduce((acc, metric) => {
-      if (!acc[metric.id]) acc[metric.id] = [];
-      acc[metric.id].push(metric);
-      return acc;
-    }, {} as Record<string, AnalyticsMetric[]>);
-
-    const metricIds = Object.keys(metricGroups);
-    
-    for (let i = 0; i < metricIds.length; i++) {
-      for (let j = i + 1; j < metricIds.length; j++) {
-        const metric1 = metricGroups[metricIds[i]];
-        const metric2 = metricGroups[metricIds[j]];
+      // Анализ успешных паттернов
+      const powerUsers = userInsights.filter(u => u.behaviorPattern === 'power_user');
+      if (powerUsers.length > 0) {
+        const commonFeatures = this.findCommonPatterns(powerUsers);
         
-        if (metric1.length < 5 || metric2.length < 5) continue;
-
-        const correlation = this.calculateCorrelation(
-          metric1.map(m => m.value),
-          metric2.map(m => m.value)
-        );
-
-        if (Math.abs(correlation) > 0.7) {
-          insights.push({
-            type: 'opportunity',
-            title: `Сильная корреляция между ${metric1[0].name} и ${metric2[0].name}`,
-            description: `Метрики показывают ${correlation > 0 ? 'положительную' : 'отрицательную'} корреляцию (${(correlation * 100).toFixed(1)}%)`,
-            impact: 'medium',
-            actionable: true,
-            recommendations: [
-              'Использовать эту зависимость для прогнозирования',
-              'Оптимизировать процессы с учетом корреляции'
-            ]
-          });
-        }
-      }
-    }
-
-    return insights;
-  }
-
-  // Вспомогательные математические методы
-
-  private calculateTrend(values: number[]): number {
-    if (values.length < 2) return 0;
-    
-    const n = values.length;
-    const xSum = n * (n - 1) / 2;
-    const ySum = values.reduce((sum, val) => sum + val, 0);
-    const xySum = values.reduce((sum, val, index) => sum + val * index, 0);
-    const xSquareSum = n * (n - 1) * (2 * n - 1) / 6;
-    
-    const slope = (n * xySum - xSum * ySum) / (n * xSquareSum - xSum * xSum);
-    return slope / (ySum / n); // Нормализуем по среднему значению
-  }
-
-  private calculateCorrelation(x: number[], y: number[]): number {
-    const n = Math.min(x.length, y.length);
-    if (n < 2) return 0;
-
-    const xMean = x.slice(0, n).reduce((sum, val) => sum + val, 0) / n;
-    const yMean = y.slice(0, n).reduce((sum, val) => sum + val, 0) / n;
-
-    let numerator = 0;
-    let xSumSquare = 0;
-    let ySumSquare = 0;
-
-    for (let i = 0; i < n; i++) {
-      const xDiff = x[i] - xMean;
-      const yDiff = y[i] - yMean;
-      
-      numerator += xDiff * yDiff;
-      xSumSquare += xDiff * xDiff;
-      ySumSquare += yDiff * yDiff;
-    }
-
-    const denominator = Math.sqrt(xSumSquare * ySumSquare);
-    return denominator === 0 ? 0 : numerator / denominator;
-  }
-
-  // Методы предиктивного анализа
-
-  private linearRegression(data: AnalyticsMetric[], horizon: number): Array<{
-    date: Date;
-    value: number;
-    confidence: { lower: number; upper: number };
-  }> {
-    const values = data.map(d => d.value);
-    const n = values.length;
-    
-    // Простая линейная регрессия
-    const xSum = n * (n - 1) / 2;
-    const ySum = values.reduce((sum, val) => sum + val, 0);
-    const xySum = values.reduce((sum, val, index) => sum + val * index, 0);
-    const xSquareSum = n * (n - 1) * (2 * n - 1) / 6;
-    
-    const slope = (n * xySum - xSum * ySum) / (n * xSquareSum - xSum * xSum);
-    const intercept = (ySum - slope * xSum) / n;
-    
-    const lastDate = data[data.length - 1].timestamp;
-    const predictions = [];
-    
-    for (let i = 1; i <= horizon; i++) {
-      const predictedValue = intercept + slope * (n + i - 1);
-      const confidence = Math.abs(predictedValue) * 0.1; // 10% доверительный интервал
-      
-      predictions.push({
-        date: new Date(lastDate.getTime() + i * 24 * 60 * 60 * 1000),
-        value: Math.max(0, predictedValue),
-        confidence: {
-          lower: Math.max(0, predictedValue - confidence),
-          upper: predictedValue + confidence
-        }
-      });
-    }
-    
-    return predictions;
-  }
-
-  private exponentialSmoothing(data: AnalyticsMetric[], horizon: number): Array<{
-    date: Date;
-    value: number;
-    confidence: { lower: number; upper: number };
-  }> {
-    const values = data.map(d => d.value);
-    const alpha = 0.3; // Параметр сглаживания
-    
-    let smoothed = values[0];
-    for (let i = 1; i < values.length; i++) {
-      smoothed = alpha * values[i] + (1 - alpha) * smoothed;
-    }
-    
-    const lastDate = data[data.length - 1].timestamp;
-    const predictions = [];
-    
-    for (let i = 1; i <= horizon; i++) {
-      const confidence = smoothed * 0.15; // 15% доверительный интервал
-      
-      predictions.push({
-        date: new Date(lastDate.getTime() + i * 24 * 60 * 60 * 1000),
-        value: Math.max(0, smoothed),
-        confidence: {
-          lower: Math.max(0, smoothed - confidence),
-          upper: smoothed + confidence
-        }
-      });
-    }
-    
-    return predictions;
-  }
-
-  private seasonalDecomposition(data: AnalyticsMetric[], horizon: number): Array<{
-    date: Date;
-    value: number;
-    confidence: { lower: number; upper: number };
-  }> {
-    // Упрощенная сезонная декомпозиция
-    const values = data.map(d => d.value);
-    const seasonLength = 7; // Недельная сезонность
-    
-    if (values.length < seasonLength * 2) {
-      return this.linearRegression(data, horizon);
-    }
-    
-    // Вычисляем сезонные компоненты
-    const seasonal = [];
-    for (let i = 0; i < seasonLength; i++) {
-      const seasonValues = [];
-      for (let j = i; j < values.length; j += seasonLength) {
-        seasonValues.push(values[j]);
-      }
-      const seasonAvg = seasonValues.reduce((sum, val) => sum + val, 0) / seasonValues.length;
-      seasonal.push(seasonAvg);
-    }
-    
-    const trend = values[values.length - 1];
-    const lastDate = data[data.length - 1].timestamp;
-    const predictions = [];
-    
-    for (let i = 1; i <= horizon; i++) {
-      const seasonIndex = (values.length + i - 1) % seasonLength;
-      const predictedValue = trend + (seasonal[seasonIndex] - trend) * 0.5;
-      const confidence = predictedValue * 0.2;
-      
-      predictions.push({
-        date: new Date(lastDate.getTime() + i * 24 * 60 * 60 * 1000),
-        value: Math.max(0, predictedValue),
-        confidence: {
-          lower: Math.max(0, predictedValue - confidence),
-          upper: predictedValue + confidence
-        }
-      });
-    }
-    
-    return predictions;
-  }
-
-  private arimaModel(data: AnalyticsMetric[], horizon: number): Array<{
-    date: Date;
-    value: number;
-    confidence: { lower: number; upper: number };
-  }> {
-    // Упрощенная ARIMA модель (фактически AR(1))
-    const values = data.map(d => d.value);
-    
-    if (values.length < 3) {
-      return this.linearRegression(data, horizon);
-    }
-    
-    // Вычисляем авторегрессионный коэффициент
-    let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
-    
-    for (let i = 1; i < values.length; i++) {
-      const x = values[i - 1];
-      const y = values[i];
-      
-      sumX += x;
-      sumY += y;
-      sumXY += x * y;
-      sumXX += x * x;
-    }
-    
-    const n = values.length - 1;
-    const beta = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
-    const alpha = (sumY - beta * sumX) / n;
-    
-    const lastDate = data[data.length - 1].timestamp;
-    const predictions = [];
-    let lastValue = values[values.length - 1];
-    
-    for (let i = 1; i <= horizon; i++) {
-      const predictedValue = alpha + beta * lastValue;
-      const confidence = Math.abs(predictedValue) * 0.15;
-      
-      predictions.push({
-        date: new Date(lastDate.getTime() + i * 24 * 60 * 60 * 1000),
-        value: Math.max(0, predictedValue),
-        confidence: {
-          lower: Math.max(0, predictedValue - confidence),
-          upper: predictedValue + confidence
-        }
-      });
-      
-      lastValue = predictedValue;
-    }
-    
-    return predictions;
-  }
-
-  private calculateModelAccuracy(data: AnalyticsMetric[], model: string): number {
-    // Простая оценка точности модели на исторических данных
-    if (data.length < 10) return 50;
-    
-    const testSize = Math.min(5, Math.floor(data.length * 0.2));
-    const trainData = data.slice(0, data.length - testSize);
-    const testData = data.slice(data.length - testSize);
-    
-    // Генерируем прогнозы для тестовых данных
-    let predictions;
-    switch (model) {
-      case 'linear':
-        predictions = this.linearRegression(trainData, testSize);
-        break;
-      case 'exponential':
-        predictions = this.exponentialSmoothing(trainData, testSize);
-        break;
-      default:
-        return 70; // Средняя точность по умолчанию
-    }
-    
-    // Вычисляем MAPE (Mean Absolute Percentage Error)
-    let totalError = 0;
-    for (let i = 0; i < testSize; i++) {
-      const actual = testData[i].value;
-      const predicted = predictions[i].value;
-      totalError += Math.abs((actual - predicted) / actual);
-    }
-    
-    const mape = totalError / testSize;
-    return Math.max(0, Math.min(100, (1 - mape) * 100));
-  }
-
-  // Методы для получения данных
-
-  private getRecentMetrics(minutes: number): AnalyticsMetric[] {
-    const cutoff = new Date(Date.now() - minutes * 60 * 1000);
-    const recent: AnalyticsMetric[] = [];
-    
-    this.metrics.forEach(metricHistory => {
-      const recentForMetric = metricHistory.filter(m => m.timestamp > cutoff);
-      recent.push(...recentForMetric);
-    });
-    
-    return recent.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-  }
-
-  private async getSystemHealth(): Promise<any> {
-    // В реальном приложении здесь был бы мониторинг системы
-    return {
-      cpu: Math.random() * 100,
-      memory: Math.random() * 100,
-      disk: Math.random() * 100,
-      network: Math.random() * 100
-    };
-  }
-
-  private async getGameActivity(): Promise<any> {
-    // В реальном приложении здесь были бы реальные данные
-    return {
-      gamesPlaying: Math.floor(Math.random() * 1000),
-      gamesGenerated: Math.floor(Math.random() * 50),
-      activeGames: Math.floor(Math.random() * 100)
-    };
-  }
-
-  private async getActiveUsersCount(): Promise<number> {
-    // В реальном приложении здесь был бы запрос к базе данных
-    return Math.floor(Math.random() * 5000);
-  }
-
-  private async calculateTrends(metrics: AnalyticsMetric[]): Promise<any[]> {
-    const trends: any[] = [];
-    
-    const metricGroups = metrics.reduce((acc, metric) => {
-      if (!acc[metric.id]) acc[metric.id] = [];
-      acc[metric.id].push(metric);
-      return acc;
-    }, {} as Record<string, AnalyticsMetric[]>);
-
-    Object.entries(metricGroups).forEach(([metricId, metricList]) => {
-      if (metricList.length >= 2) {
-        const sorted = metricList.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-        const change = ((sorted[sorted.length - 1].value - sorted[0].value) / sorted[0].value) * 100;
-        
-        trends.push({
-          metric: sorted[0].name,
-          trend: change > 5 ? 'up' : change < -5 ? 'down' : 'stable',
-          change: Math.round(change * 100) / 100
+        newInsights.push({
+          id: uuidv4(),
+          type: 'opportunity',
+          title: 'Выявлены паттерны успешных пользователей',
+          description: `Обнаружены общие характеристики у ${powerUsers.length} power users`,
+          impact: 'medium',
+          confidence: 0.75,
+          data: { patterns: commonFeatures, userCount: powerUsers.length },
+          actionable: true,
+          suggestedActions: [
+            'Оптимизировать онбординг под эти паттерны',
+            'Создать целевую рекламу',
+            'Добавить функции для поощрения таких действий'
+          ],
+          createdAt: new Date(),
+          relevantFor: ['product_team', 'growth_team']
         });
       }
-    });
-    
-    return trends;
-  }
 
-  // Методы инициализации и управления
-
-  private initializeMetrics(): void {
-    // Инициализируем базовые метрики
-    logger.info('Advanced analytics service initialized');
-  }
-
-  private startPeriodicAnalysis(): void {
-    // Запускаем периодический анализ каждые 5 минут
-    setInterval(() => {
-      this.performPeriodicAnalysis();
-    }, 5 * 60 * 1000);
-  }
-
-  private async performPeriodicAnalysis(): Promise<void> {
-    try {
-      // Проверяем алерты
-      await this.checkAllAlerts();
+      // Добавляем инсайты
+      this.insights.push(...newInsights);
       
-      // Обновляем кэш
-      this.updateMetricCache();
+      // Ограничиваем количество инсайтов
+      this.insights = this.insights.slice(-100);
       
-      // Очищаем старые данные
-      this.cleanupOldData();
-      
+      logger.info('Сгенерированы умные инсайты', { count: newInsights.length });
     } catch (error) {
-      logger.error('Error in periodic analysis:', error);
+      logger.error('Ошибка генерации инсайтов', { error });
     }
   }
 
-  private async checkAlerts(metrics: AnalyticsMetric[]): Promise<void> {
-    for (const alert of this.alerts.values()) {
-      const relevantMetrics = metrics.filter(m => m.id === alert.metric);
+  private findCommonPatterns(users: UserInsight[]): string[] {
+    // Упрощенный анализ общих паттернов
+    const patterns: string[] = [];
+    
+    const avgEngagement = users.reduce((sum, u) => sum + u.engagementScore, 0) / users.length;
+    if (avgEngagement > 0.8) {
+      patterns.push('Высокая вовлеченность');
+    }
+
+    const avgLTV = users.reduce((sum, u) => sum + u.ltv, 0) / users.length;
+    if (avgLTV > 100) {
+      patterns.push('Высокая жизненная ценность');
+    }
+
+    return patterns;
+  }
+
+  // Очистка старых данных
+  private cleanupOldAnomalies(): void {
+    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    this.anomalies = this.anomalies.filter(a => a.detectedAt > oneWeekAgo);
+  }
+
+  // Проверка производительности моделей
+  private async checkModelPerformance(): Promise<void> {
+    for (const model of this.models.values()) {
+      // Проверяем, нужно ли переобучить модель
+      const daysSinceTraining = (Date.now() - model.lastTrained.getTime()) / (24 * 60 * 60 * 1000);
       
-      if (relevantMetrics.length > 0) {
-        const currentValue = relevantMetrics[relevantMetrics.length - 1].value;
-        alert.currentValue = currentValue;
-        
-        // Проверяем условие алерта
-        const shouldTrigger = this.evaluateAlertCondition(alert, currentValue);
-        
-        if (shouldTrigger && alert.status !== 'active') {
-          alert.status = 'active';
-          alert.triggeredAt = new Date();
-          await this.executeAlertActions(alert);
-        }
+      if (daysSinceTraining > 7) { // Переобучаем раз в неделю
+        await this.retrainModel(model.id);
       }
     }
   }
 
-  private async checkAllAlerts(): Promise<void> {
-    // Проверяем все активные алерты
-    for (const alert of this.alerts.values()) {
-      if (alert.status === 'active') {
-        const metricHistory = this.metrics.get(alert.metric) || [];
-        if (metricHistory.length > 0) {
-          const currentValue = metricHistory[metricHistory.length - 1].value;
-          alert.currentValue = currentValue;
-        }
-      }
-    }
-  }
-
-  private evaluateAlertCondition(alert: PerformanceAlert, currentValue: number): boolean {
-    // Упрощенная логика оценки условий алерта
-    if (alert.thresholdValue === undefined) return false;
+  // Переобучение моделей
+  private async retrainModels(): Promise<void> {
+    logger.info('Начинается переобучение моделей');
     
-    switch (alert.type) {
-      case 'threshold':
-        return currentValue > alert.thresholdValue;
-      case 'anomaly':
-        // Простая проверка аномалий
-        const metricHistory = this.metrics.get(alert.metric) || [];
-        if (metricHistory.length < 10) return false;
-        
-        const values = metricHistory.map(m => m.value);
-        const mean = values.reduce((sum, val) => sum + val, 0) / values.length;
-        const stdDev = Math.sqrt(
-          values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / values.length
-        );
-        
-        return Math.abs(currentValue - mean) > 2 * stdDev;
-      default:
-        return false;
-    }
-  }
-
-  private async executeAlertActions(alert: PerformanceAlert): Promise<void> {
-    for (const action of alert.actions) {
-      try {
-        switch (action.type) {
-          case 'email':
-            // await this.sendEmailAlert(alert, action.config);
-            break;
-          case 'slack':
-            // await this.sendSlackAlert(alert, action.config);
-            break;
-          case 'webhook':
-            // await this.sendWebhookAlert(alert, action.config);
-            break;
-          case 'dashboard':
-            this.emit('alertTriggered', alert);
-            break;
-        }
-      } catch (error) {
-        logger.error(`Error executing alert action ${action.type}:`, error);
+    for (const model of this.models.values()) {
+      if (model.isActive) {
+        await this.retrainModel(model.id);
       }
     }
   }
 
-  private updateMetricCache(): void {
-    // Обновляем кэш для быстрого доступа к метрикам
-    this.metricCache.clear();
-    
-    this.metrics.forEach((metricHistory, metricId) => {
-      if (metricHistory.length > 0) {
-        const latest = metricHistory[metricHistory.length - 1];
-        this.metricCache.set(metricId, latest);
-      }
-    });
+  private async retrainModel(modelId: string): Promise<void> {
+    const model = this.models.get(modelId);
+    if (!model) return;
+
+    try {
+      // В реальной реализации здесь был бы полный цикл переобучения
+      // Для демонстрации просто обновляем timestamp и accuracy
+      
+      const newAccuracy = Math.min(0.95, model.accuracy + (Math.random() - 0.5) * 0.1);
+      model.accuracy = Math.max(0.5, newAccuracy);
+      model.lastTrained = new Date();
+      
+      logger.info('Модель переобучена', { modelId, newAccuracy: model.accuracy });
+    } catch (error) {
+      logger.error('Ошибка переобучения модели', { error, modelId });
+    }
   }
 
-  private cleanupOldData(): void {
-    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // 30 дней
-    
-    this.metrics.forEach((metricHistory, metricId) => {
-      const filtered = metricHistory.filter(m => m.timestamp > cutoff);
-      this.metrics.set(metricId, filtered);
-    });
+  // Публичные методы для API
+
+  // Получение предсказаний пользователя
+  getUserPredictions(userId: string): Prediction[] {
+    return this.predictions.get(userId) || [];
   }
 
-  // Генераторы ID
-
-  private generateReportId(): string {
-    return `report_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  // Получение инсайтов пользователя
+  getUserInsights(userId: string): UserInsight | undefined {
+    return this.userInsights.get(userId);
   }
 
-  private generateFunnelId(): string {
-    return `funnel_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  // Получение всех моделей
+  getModels(): PredictiveModel[] {
+    return Array.from(this.models.values());
   }
 
-  private generateCohortId(): string {
-    return `cohort_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  // Получение аномалий
+  getAnomalies(severity?: AnomalyDetection['severity']): AnomalyDetection[] {
+    return severity 
+      ? this.anomalies.filter(a => a.severity === severity)
+      : this.anomalies;
   }
 
-  private generateSegmentId(): string {
-    return `segment_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  // Получение умных инсайтов
+  getInsights(limit: number = 20): IntelligentInsight[] {
+    return this.insights.slice(-limit).reverse();
   }
 
-  private generateAlertId(): string {
-    return `alert_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  // Получение когортного анализа
+  getCohorts(): CohortAnalysis[] {
+    return Array.from(this.cohorts.values());
   }
 
-  // Публичные методы доступа
-
-  public getMetric(metricId: string): AnalyticsMetric | null {
-    return this.metricCache.get(metricId) || null;
-  }
-
-  public getReport(reportId: string): AnalyticsReport | null {
-    return this.reports.get(reportId) || null;
-  }
-
-  public getSegment(segmentId: string): UserSegment | null {
-    return this.segments.get(segmentId) || null;
-  }
-
-  public getAlert(alertId: string): PerformanceAlert | null {
-    return this.alerts.get(alertId) || null;
-  }
-
-  public getFunnel(funnelId: string): FunnelAnalysis | null {
-    return this.funnels.get(funnelId) || null;
-  }
-
-  public getCohort(cohortId: string): CohortAnalysis | null {
-    return this.cohorts.get(cohortId) || null;
-  }
-
-  public getAllReports(): AnalyticsReport[] {
-    return Array.from(this.reports.values());
-  }
-
-  public getAllAlerts(): PerformanceAlert[] {
-    return Array.from(this.alerts.values());
-  }
-
-  public getStats(): {
-    totalMetrics: number;
-    totalReports: number;
-    totalSegments: number;
-    totalAlerts: number;
-    totalFunnels: number;
-    totalCohorts: number;
-    activeAlerts: number;
-    dataPointsCollected: number;
-  } {
-    let dataPointsCollected = 0;
-    this.metrics.forEach(metricHistory => {
-      dataPointsCollected += metricHistory.length;
-    });
-
+  // Получение статистики сервиса
+  getServiceStats(): any {
     return {
-      totalMetrics: this.metrics.size,
-      totalReports: this.reports.size,
-      totalSegments: this.segments.size,
-      totalAlerts: this.alerts.size,
-      totalFunnels: this.funnels.size,
+      totalUsers: this.userInsights.size,
+      totalPredictions: Array.from(this.predictions.values()).reduce((sum, preds) => sum + preds.length, 0),
+      activeModels: Array.from(this.models.values()).filter(m => m.isActive).length,
+      totalAnomalies: this.anomalies.length,
+      totalInsights: this.insights.length,
       totalCohorts: this.cohorts.size,
-      activeAlerts: Array.from(this.alerts.values()).filter(a => a.status === 'active').length,
-      dataPointsCollected
+      lastUpdate: new Date()
     };
   }
 
-  // Заглушки для методов, которые требуют реальных данных
-  private async getUsersForStep(step: any, dateRange: any): Promise<number> {
-    return Math.floor(Math.random() * 1000) + 100;
-  }
+  // Создание персонализированного отчета
+  async generatePersonalizedReport(userId: string): Promise<any> {
+    const userInsight = this.userInsights.get(userId);
+    const predictions = this.predictions.get(userId) || [];
+    
+    if (!userInsight) {
+      return { error: 'User insights not found' };
+    }
 
-  private async getAverageTimeForStep(step: any, dateRange: any): Promise<number> {
-    return Math.random() * 300 + 30; // 30-330 секунд
-  }
-
-  private async applySegmentationCriteria(criteria: UserSegment['criteria']): Promise<any[]> {
-    // Возвращаем случайный набор пользователей для демонстрации
-    const userCount = Math.floor(Math.random() * 10000) + 100;
-    return new Array(userCount).fill(null).map((_, i) => ({ id: i }));
-  }
-
-  private async calculateSegmentMetrics(users: any[]): Promise<Record<string, number>> {
     return {
-      averageSessionTime: Math.random() * 1800 + 300,
-      gamesPerUser: Math.random() * 10 + 1,
-      retentionRate: Math.random() * 100,
-      conversionRate: Math.random() * 50
-    };
-  }
-
-  private async buildCohorts(config: any): Promise<CohortAnalysis['cohorts']> {
-    // Генерируем демо-данные когорт
-    const cohorts = [];
-    const periodsCount = config.periods;
-    
-    for (let i = 0; i < 12; i++) { // 12 когорт
-      const size = Math.floor(Math.random() * 1000) + 100;
-      const data = [];
-      
-      for (let j = 0; j < periodsCount; j++) {
-        const retention = Math.max(0, 1 - (j * 0.1) - Math.random() * 0.3);
-        data.push(Math.floor(size * retention));
-      }
-      
-      cohorts.push({
-        period: `2024-${String(i + 1).padStart(2, '0')}`,
-        size,
-        data
-      });
-    }
-    
-    return cohorts;
-  }
-
-  private calculateAverageRetention(cohorts: CohortAnalysis['cohorts']): number[] {
-    if (cohorts.length === 0) return [];
-    
-    const periodsCount = cohorts[0].data.length;
-    const averages = [];
-    
-    for (let i = 0; i < periodsCount; i++) {
-      const sum = cohorts.reduce((acc, cohort) => acc + (cohort.data[i] / cohort.size), 0);
-      averages.push(sum / cohorts.length);
-    }
-    
-    return averages;
-  }
-
-  private generatePeriodLabels(periods: number, periodType: string): string[] {
-    const labels = [];
-    for (let i = 0; i < periods; i++) {
-      labels.push(`${periodType} ${i}`);
-    }
-    return labels;
-  }
-
-  private generateFunnelInsights(steps: any[], bottlenecks: any[], overallConversion: number): string[] {
-    const insights = [];
-    
-    if (overallConversion < 10) {
-      insights.push('Общая конверсия воронки критически низкая');
-    } else if (overallConversion > 50) {
-      insights.push('Отличная общая конверсия воронки');
-    }
-    
-    if (bottlenecks.length > 0) {
-      insights.push(`Основные проблемы на этапе: ${bottlenecks[0].step}`);
-    }
-    
-    return insights;
-  }
-
-  private generateFunnelRecommendations(bottlenecks: any[], steps: any[]): string[] {
-    const recommendations = [];
-    
-    if (bottlenecks.length > 0) {
-      recommendations.push(`Оптимизировать этап "${bottlenecks[0].step}"`);
-      recommendations.push('Провести A/B тестирование улучшений');
-    }
-    
-    recommendations.push('Настроить алерты для критических точек воронки');
-    
-    return recommendations;
-  }
-
-  private generateCohortInsights(cohorts: any[], averageRetention: number[], type: string): string[] {
-    const insights = [];
-    
-    if (averageRetention.length > 1) {
-      const retention1Day = averageRetention[1];
-      if (retention1Day < 0.3) {
-        insights.push('Низкий уровень удержания на первый день');
-      } else if (retention1Day > 0.7) {
-        insights.push('Отличное удержание пользователей');
-      }
-    }
-    
-    return insights;
-  }
-
-  private generatePredictionInsights(predictions: any[], historical: any[], accuracy: number): string[] {
-    const insights = [];
-    
-    if (accuracy > 80) {
-      insights.push('Высокая точность прогнозной модели');
-    } else if (accuracy < 60) {
-      insights.push('Низкая точность модели, требуется дополнительная настройка');
-    }
-    
-    const trend = predictions[predictions.length - 1].value > predictions[0].value ? 'рост' : 'снижение';
-    insights.push(`Прогнозируется ${trend} метрики`);
-    
-    return insights;
-  }
-
-  private async getABTestData(testId: string, variant: string, dateRange: any): Promise<any> {
-    // Демо-данные для A/B теста
-    const users = Math.floor(Math.random() * 1000) + 100;
-    const conversions = Math.floor(users * (Math.random() * 0.3 + 0.1));
-    
-    return { users, conversions };
-  }
-
-  private calculateConfidence(users: number, conversions: number): number {
-    // Упрощенный расчет доверительного интервала
-    const rate = conversions / users;
-    const standardError = Math.sqrt((rate * (1 - rate)) / users);
-    return (1 - 2 * standardError) * 100;
-  }
-
-  private calculateStatisticalSignificance(results: any[]): number {
-    // Упрощенный расчет статистической значимости
-    if (results.length < 2) return 0;
-    
-    const variances = results.map(r => r.conversionRate * (1 - r.conversionRate) / r.users);
-    const pooledVariance = variances.reduce((sum, v) => sum + v, 0) / variances.length;
-    
-    return Math.min(95, Math.max(50, 90 - pooledVariance * 1000));
-  }
-
-  private generateABTestInsights(results: any[], significance: number): string[] {
-    const insights = [];
-    
-    if (significance >= 95) {
-      insights.push('Результаты статистически значимы');
-    } else {
-      insights.push('Требуется больше данных для статистической значимости');
-    }
-    
-    const best = results.reduce((best, current) => 
-      current.conversionRate > best.conversionRate ? current : best
-    );
-    
-    insights.push(`Лучший результат показал вариант ${best.variant}`);
-    
-    return insights;
-  }
-
-  private generateABTestRecommendations(results: any[], winner: string | undefined, significance: number): string[] {
-    const recommendations = [];
-    
-    if (winner && significance >= 95) {
-      recommendations.push(`Внедрить вариант ${winner} в продакшн`);
-    } else {
-      recommendations.push('Продолжить тестирование для получения значимых результатов');
-    }
-    
-    recommendations.push('Настроить мониторинг ключевых метрик');
-    
-    return recommendations;
-  }
-
-  private async generateComparison(metrics: AnalyticsMetric[], dateRange: any): Promise<any> {
-    // Генерируем сравнение с предыдущим периодом
-    const previousStart = new Date(dateRange.start.getTime() - (dateRange.end.getTime() - dateRange.start.getTime()));
-    const previousEnd = dateRange.start;
-    
-    const previousMetrics = await this.getMetricsForPeriod(
-      metrics.map(m => m.id),
-      previousStart,
-      previousEnd
-    );
-    
-    // Создаем упрощенный отчет для предыдущего периода
-    const previousReport: Partial<AnalyticsReport> = {
-      metrics: previousMetrics,
-      dateRange: {
-        start: previousStart,
-        end: previousEnd,
-        period: dateRange.period
-      }
-    };
-    
-    return {
-      previousPeriod: previousReport,
-      benchmarks: {
-        industry_average: Math.random() * 100,
-        competitor_average: Math.random() * 100
+      userId,
+      summary: {
+        behaviorPattern: userInsight.behaviorPattern,
+        engagementScore: userInsight.engagementScore,
+        churnRisk: userInsight.churnProbability,
+        ltv: userInsight.ltv
       },
-      goals: {
-        target_conversion: 15,
-        target_retention: 70,
-        target_engagement: 80
-      }
+      recommendations: userInsight.personalizedRecommendations,
+      nextBestAction: userInsight.nextBestAction,
+      riskFactors: userInsight.riskFactors,
+      opportunities: userInsight.opportunities,
+      predictions: predictions.slice(-5),
+      generatedAt: new Date()
     };
-  }
-
-  private async exportReport(report: AnalyticsReport, format: string): Promise<void> {
-    // В реальном приложении здесь была бы генерация файлов в разных форматах
-    logger.info(`Exporting report ${report.id} to ${format} format`);
   }
 }
 
-export const advancedAnalyticsService = new AdvancedAnalyticsService();
 export { AdvancedAnalyticsService }; 
